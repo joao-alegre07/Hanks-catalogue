@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block body %}
+<main class="auth-page">
+  <form class="auth-form" method="post">
+    <h1>Criar conta</h1>
+    {% if erro %}<p class="erro">{{ erro }}</p>{% endif %}
+    <label>Nome<input type="text" name="nome" required autofocus></label>
+    <label>E-mail<input type="email" name="email" required></label>
+    <label>Senha<input type="password" name="senha" required minlength="6"></label>
+    <button type="submit">Cadastrar</button>
+    <p>Já tem conta? <a href="{{ url_for('auth.login') }}">Entrar</a></p>
+  </form>
+</main>
+{% endblock %}
