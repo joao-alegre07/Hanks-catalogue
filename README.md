@@ -1,52 +1,61 @@
-# Catálogo de Filmes — Tom Hanks
+# 🎬 Tom Hanks Catalog
 
-Atividade da disciplina Introdução à Computação em Nuvem (ISW055).
-
-Aplicação Flask que busca os filmes com Tom Hanks na API do TMDB e permite que cada usuário cadastrado favorite e comente filmes, com os dados isolados por conta (persistidos em MariaDB).
+Catálogo web para descobrir e acompanhar a filmografia de Tom Hanks. Busca os filmes ao vivo na API do TMDB e deixa cada usuário favoritar e comentar, com dados isolados por conta.
 
 ## Funcionalidades
 
-- Cadastro e login próprios da aplicação (sem relação com as credenciais de MySQL/Portainer).
-- Catálogo paginado (20 filmes por página) com pôster, título, sinopse e data de lançamento, sempre buscado ao vivo na API do TMDB.
-- Favoritar e comentar filmes, com os dados isolados por usuário — o que a conta A favorita/comenta não aparece pra conta B.
+- **Cadastro e login** próprios da aplicação, com senha com hash (nunca em texto puro).
+- **Catálogo paginado** (20 filmes por página), sempre buscado em tempo real na API do TMDB — pôster, título, sinopse e data de lançamento nunca ficam desatualizados.
+- **Favoritos e comentários** por usuário, com isolamento total: o que a conta A favorita ou comenta não aparece pra conta B, mesmo que ela tente adivinhar o ID.
 
-## Arquitetura
+## Stack
 
-- **Backend**: Flask (Python), sessão de login própria da aplicação.
-- **Dados dos filmes**: sempre buscados ao vivo na API do TMDB (nunca armazenados no banco).
-- **Persistência**: MariaDB — apenas `usuarios`, `favoritos` e `comentarios` (ver [`init.sql`](init.sql)).
-- **Segregação**: toda consulta a favoritos/comentários é filtrada por `usuario_id` da sessão logada.
-- **Credenciais**: só existem como variáveis de ambiente no servidor (backend). Nunca aparecem no código nem em JavaScript client-side.
+- **Backend**: Python + Flask
+- **Banco de dados**: MariaDB
+- **Dados de filmes**: [TMDB API](https://www.themoviedb.org/documentation/api)
+- **Deploy**: Docker, servido via Gunicorn
 
 ## Rodando localmente
 
-Uso local (banco MariaDB descartável, só pra dev):
+Pré-requisitos: Docker e uma [chave de API do TMDB](https://developer.themoviedb.org) (gratuita).
 
 ```bash
+git clone https://github.com/joao-alegre07/Hanks-catalogue.git
+cd Hanks-catalogue
 cp .env.example .env
-# preencha .env com sua chave TMDB e uma senha qualquer para o banco local
+# edite o .env com sua chave TMDB (o resto já tem valores padrão pro banco local)
 docker compose -f docker-compose.dev.yml up --build
 ```
 
-Acesse `http://localhost:5000`.
+Acesse `http://localhost:5000`. Esse compose sobe um MariaDB descartável junto, só pra desenvolvimento — nada de produção usa esse banco.
 
-## Deploy no Portainer
+## Estrutura do projeto
 
-O `docker-compose.yml` da raiz (diferente do `docker-compose.dev.yml`) é o usado em produção: um único
-serviço `app`, publicado na porta reservada, conectando direto no MariaDB real da disciplina — sem
-banco local.
+```
+app/
+  __init__.py    # cria e configura a aplicação Flask
+  auth.py        # cadastro, login, logout, decorator de sessão
+  movies.py      # catálogo paginado, favoritar, comentar
+  db.py          # conexão com o MariaDB
+  tmdb.py        # integração com a API do TMDB
+templates/       # páginas (login, cadastro, catálogo)
+static/          # CSS
+init.sql         # schema do banco (usuarios, favoritos, comentarios)
+Dockerfile
+docker-compose.yml      # produção (Portainer)
+docker-compose.dev.yml  # desenvolvimento local
+```
 
-1. Suba este repositório no GitHub (público) — feito.
-2. No Portainer: **Stacks → + Add stack → aba Repository**.
-3. Cole a URL deste repositório.
-4. Em **Environment variables**, adicione (sem isso o app não conecta em nada):
-   - `SECRET_KEY`
-   - `TMDB_API_KEY`
-   - `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
-5. Clique em **Deploy the stack** — o Portainer clona o repositório e builda a imagem a partir do `Dockerfile`.
-6. A aplicação deve responder em `https://joao-alegre-isw055.lapps.studio` (a porta do host, 8212, é o
-   que vincula o container a esse subdomínio).
+## Deploy
 
-## Variáveis de ambiente
+A imagem é buildada a partir do `Dockerfile` e publicada via `docker-compose.yml`. Nenhuma credencial fica no repositório — tudo é injetado como variável de ambiente em tempo de deploy (ver `.env.example` pra lista completa: chave da TMDB e credenciais do MariaDB).
 
-Ver [`.env.example`](.env.example) para a lista completa. Nenhum valor real é versionado — `.env` está no `.gitignore`.
+## Segurança
+
+- Toda chamada à TMDB e ao MariaDB parte do backend — nada de chave ou senha exposta no HTML/JS que chega no navegador.
+- Senhas de usuário armazenadas com hash (`werkzeug.security`).
+- `.env` no `.gitignore`; só `.env.example` (sem valores reais) é versionado.
+
+---
+
+Projeto para a aula do professor [@siriani](https://github.com/siriani).
