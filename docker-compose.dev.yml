@@ -1,0 +1,32 @@
+# Uso local, para testar antes de publicar no Portainer.
+# O MariaDB "de verdade" da disciplina já existe no servidor do professor;
+# esse serviço "db" aqui é só uma cópia local pra desenvolver sem depender da rede.
+#
+# Rodar com: docker compose -f docker-compose.dev.yml up --build
+services:
+  app:
+    build: .
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    environment:
+      DB_HOST: db
+    depends_on:
+      - db
+
+  db:
+    image: mariadb:11
+    environment:
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_DATABASE: ${DB_NAME}
+      MARIADB_USER: ${DB_USER}
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - db_data:/var/lib/mysql
+
+volumes:
+  db_data:

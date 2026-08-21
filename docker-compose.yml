@@ -1,0 +1,17 @@
+# Usado pelo Portainer (Stacks -> Add stack -> Repository -> Deploy the stack).
+# As variáveis abaixo vêm do campo "Environment variables" do Portainer no momento
+# do deploy -- nenhum valor real fica gravado neste arquivo nem no repositório.
+services:
+  app:
+    build: .
+    ports:
+      - "8212:5000"
+    environment:
+      SECRET_KEY: ${SECRET_KEY}
+      TMDB_API_KEY: ${TMDB_API_KEY}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+    restart: unless-stopped
