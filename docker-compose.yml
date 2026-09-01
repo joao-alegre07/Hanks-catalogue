@@ -14,4 +14,33 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: ${DB_NAME}
+      AUTH_SERVICE_URL: http://auth:5001
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL}
+    networks:
+      - interna
+    depends_on:
+      - auth
     restart: unless-stopped
+
+  # Serviço de autenticação: login, cadastro, papéis (role) e esqueci-senha.
+  # Sem "ports:" de propósito -- só acessível pela rede interna "interna",
+  # nunca publicado pro host. O catálogo é o único ponto de entrada público.
+  auth:
+    build: ./auth-service
+    environment:
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      MAIL_FROM: ${MAIL_FROM}
+    networks:
+      - interna
+    restart: unless-stopped
+
+networks:
+  interna:

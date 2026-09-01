@@ -49,6 +49,7 @@ body {
 }
 
 .erro { color: #ff6b6b; }
+.sucesso { color: #4caf50; }
 
 .topbar {
   display: flex;

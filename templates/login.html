@@ -4,9 +4,11 @@
   <form class="auth-form" method="post">
     <h1>Entrar</h1>
     {% if erro %}<p class="erro">{{ erro }}</p>{% endif %}
+    {% if request.args.get('redefinida') %}<p class="sucesso">Senha alterada! Já pode entrar.</p>{% endif %}
     <label>E-mail<input type="email" name="email" required autofocus></label>
     <label>Senha<input type="password" name="senha" required></label>
     <button type="submit">Entrar</button>
+    <p><a href="{{ url_for('auth.esqueci_senha') }}">Esqueci minha senha</a></p>
     <p>Não tem conta? <a href="{{ url_for('auth.cadastro') }}">Cadastre-se</a></p>
   </form>
 </main>

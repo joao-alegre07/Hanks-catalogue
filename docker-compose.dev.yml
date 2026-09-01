@@ -12,6 +12,19 @@ services:
       - .env
     environment:
       DB_HOST: db
+      AUTH_SERVICE_URL: http://auth:5001
+      PUBLIC_APP_URL: http://localhost:5000
+    depends_on:
+      - db
+      - auth
+
+  auth:
+    build: ./auth-service
+    env_file:
+      - .env
+    environment:
+      DB_HOST: db
+      PORT: 5001
     depends_on:
       - db
 
