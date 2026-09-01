@@ -77,7 +77,7 @@ docker-compose.dev.yml    # desenvolvimento local
 
 As duas imagens são buildadas a partir de seus respectivos `Dockerfile`s e publicadas via
 `docker-compose.yml`. O serviço de autenticação **não tem porta publicada pro host** — só é
-alcançável pelo catálogo, internamente, pela rede Docker (`interna`). Nenhuma credencial fica no
+alcançável pelo catálogo, internamente, pela rede padrão do projeto no Docker. Nenhuma credencial fica no
 repositório — tudo é injetado como variável de ambiente em tempo de deploy (ver `.env.example`
 pra lista completa: chave da TMDB, credenciais do MariaDB e credenciais SMTP).
 

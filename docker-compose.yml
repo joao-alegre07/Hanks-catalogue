@@ -1,6 +1,12 @@
 # Usado pelo Portainer (Stacks -> Add stack -> Repository -> Deploy the stack).
 # As variáveis abaixo vêm do campo "Environment variables" do Portainer no momento
 # do deploy -- nenhum valor real fica gravado neste arquivo nem no repositório.
+#
+# Os dois serviços ficam na rede padrão do projeto (criada automaticamente pelo
+# Compose, sem precisar declarar nada) -- de propósito, pra reaproveitar a rede
+# que já existe desde o primeiro deploy em vez de pedir uma sub-rede nova ao
+# Docker (o servidor é compartilhado com a turma inteira e o pool de sub-redes
+# livres é limitado).
 services:
   app:
     build: .
@@ -16,15 +22,13 @@ services:
       DB_NAME: ${DB_NAME}
       AUTH_SERVICE_URL: http://auth:5001
       PUBLIC_APP_URL: ${PUBLIC_APP_URL}
-    networks:
-      - interna
     depends_on:
       - auth
     restart: unless-stopped
 
   # Serviço de autenticação: login, cadastro, papéis (role) e esqueci-senha.
-  # Sem "ports:" de propósito -- só acessível pela rede interna "interna",
-  # nunca publicado pro host. O catálogo é o único ponto de entrada público.
+  # Sem "ports:" de propósito -- só acessível pela rede do projeto, nunca
+  # publicado pro host. O catálogo é o único ponto de entrada público.
   auth:
     build: ./auth-service
     environment:
@@ -38,9 +42,4 @@ services:
       SMTP_USER: ${SMTP_USER}
       SMTP_PASSWORD: ${SMTP_PASSWORD}
       MAIL_FROM: ${MAIL_FROM}
-    networks:
-      - interna
     restart: unless-stopped
-
-networks:
-  interna:
