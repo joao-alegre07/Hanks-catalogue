@@ -8,7 +8,8 @@ A aplicação é dividida em dois serviços independentes: o **catálogo** (púb
 
 - **Cadastro e login** com senha com hash (nunca em texto puro), isolados num serviço próprio.
 - **Catálogo paginado** (20 filmes por página), sempre buscado em tempo real na API do TMDB — pôster, título, sinopse e data de lançamento nunca ficam desatualizados.
-- **Favoritos e comentários** por usuário, com isolamento total: o que a conta A favorita ou comenta não aparece pra conta B, mesmo que ela tente adivinhar o ID.
+- **Favoritos** privados por conta — o que a conta A favorita não aparece pra conta B.
+- **Comentários** visíveis pra qualquer usuário logado (como uma seção de reviews do filme), mas só o próprio autor — ou um admin — pode apagar um comentário.
 - **Papéis de usuário** (`usuario` / `admin`) geridos pelo serviço de autenticação.
 - **Recuperação de senha por e-mail**: link único, expira em 30 minutos e não pode ser reutilizado.
 
@@ -87,6 +88,31 @@ pra lista completa: chave da TMDB, credenciais do MariaDB e credenciais SMTP).
 - Senhas de usuário armazenadas com hash (`werkzeug.security`).
 - Links de redefinição de senha expiram em 30 minutos e não podem ser reutilizados (`reset_tokens.usado`).
 - `.env` no `.gitignore`; só `.env.example` (sem valores reais) é versionado.
+
+## Permissões por papel
+
+| Ação | `usuario` | `admin` |
+|---|---|---|
+| Ver catálogo, favoritar, comentar | ✅ | ✅ |
+| Apagar o próprio comentário | ✅ | ✅ |
+| Apagar comentário de qualquer usuário (moderação) | ❌ | ✅ |
+
+A checagem acontece sempre no backend, nunca só escondendo um botão na tela: chamar o endpoint
+`POST /comentarios/<id>/deletar` direto (por curl, Postman etc.) tentando apagar o comentário de
+outra pessoa retorna `403` pra quem não é admin, independente do que a interface mostra.
+
+## Padrão A ou B?
+
+O `auth-service` hoje segue o **Padrão A (enforcement centralizado)**: antes de deixar alguém
+apagar o comentário de outra pessoa, o catálogo faz uma chamada HTTP pro `auth-service`
+(`GET /usuarios/<id>`) perguntando o papel *atual* daquele usuário — não confia em nada guardado
+na sessão desde o login.
+
+Se fosse pro Padrão B (claims num JWT assinado no login), o catálogo decodificaria o papel
+localmente e decidiria sozinho, sem chamada de rede extra a cada tentativa de apagar um
+comentário — mais rápido, mas com uma troca: se o papel de alguém mudasse (um admin virando
+usuário comum, por exemplo), isso só teria efeito depois que o token expirasse e fosse renovado,
+em vez de valer na hora, como acontece hoje.
 
 ---
 

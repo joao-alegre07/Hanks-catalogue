@@ -107,7 +107,27 @@ body {
 .fav-btn.ativo { background: #e50914; border-color: #e50914; }
 
 .comentarios { display: flex; flex-direction: column; gap: 0.35rem; }
-.comentario { font-size: 0.8rem; background: #12121a; padding: 0.4rem; border-radius: 4px; margin: 0; }
+.comentario {
+  font-size: 0.8rem;
+  background: #12121a;
+  padding: 0.4rem;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.comentario p { margin: 0; }
+.apagar-comentario {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid #663;
+  border-radius: 4px;
+  background: transparent;
+  color: #ff6b6b;
+  cursor: pointer;
+}
 
 .comentar-form { display: flex; gap: 0.35rem; }
 .comentar-form input {

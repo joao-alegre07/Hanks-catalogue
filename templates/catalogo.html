@@ -26,7 +26,15 @@
 
       <div class="comentarios">
         {% for c in filme.comentarios %}
-          <p class="comentario">{{ c.texto }}</p>
+          <div class="comentario">
+            <p><strong>{{ c.nome_usuario }}:</strong> {{ c.texto }}</p>
+            {% if c.pode_apagar %}
+            <form method="post" action="{{ url_for('movies.deletar_comentario', comentario_id=c.id) }}">
+              <input type="hidden" name="page" value="{{ pagina }}">
+              <button type="submit" class="apagar-comentario">Apagar</button>
+            </form>
+            {% endif %}
+          </div>
         {% endfor %}
         <form method="post" action="{{ url_for('movies.comentar') }}" class="comentar-form">
           <input type="hidden" name="tmdb_movie_id" value="{{ filme.id }}">
