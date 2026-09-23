@@ -2,7 +2,7 @@
 # As variáveis abaixo vêm do campo "Environment variables" do Portainer no momento
 # do deploy -- nenhum valor real fica gravado neste arquivo nem no repositório.
 #
-# Os dois serviços ficam na rede padrão do projeto (criada automaticamente pelo
+# Todos os serviços ficam na rede padrão do projeto (criada automaticamente pelo
 # Compose, sem precisar declarar nada) -- de propósito, pra reaproveitar a rede
 # que já existe desde o primeiro deploy em vez de pedir uma sub-rede nova ao
 # Docker (o servidor é compartilhado com a turma inteira e o pool de sub-redes
@@ -21,9 +21,11 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: ${DB_NAME}
       AUTH_SERVICE_URL: http://auth:5001
+      LOG_SERVICE_URL: http://log:5002
       PUBLIC_APP_URL: ${PUBLIC_APP_URL}
     depends_on:
       - auth
+      - log
     restart: unless-stopped
 
   # Serviço de autenticação: login, cadastro, papéis (role) e esqueci-senha.
@@ -42,4 +44,30 @@ services:
       SMTP_USER: ${SMTP_USER}
       SMTP_PASSWORD: ${SMTP_PASSWORD}
       MAIL_FROM: ${MAIL_FROM}
+      LOG_SERVICE_URL: http://log:5002
+    depends_on:
+      - log
     restart: unless-stopped
+
+  # Serviço de auditoria: recebe os eventos do catálogo e do auth e grava
+  # num Redis Stream. Também sem porta publicada -- a consulta dos logs
+  # passa pelo catálogo, na rota /admin/logs, que só admin acessa.
+  log:
+    build: ./log-service
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Só o log-service fala com o Redis. O appendonly faz o Redis gravar cada
+  # escrita em disco, então os eventos sobrevivem a um restart do container.
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  redis_data:

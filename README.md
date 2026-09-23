@@ -2,7 +2,7 @@
 
 Catálogo web para descobrir e acompanhar a filmografia de Tom Hanks. Busca os filmes ao vivo na API do TMDB e deixa cada usuário favoritar e comentar, com dados isolados por conta.
 
-A aplicação é dividida em dois serviços independentes: o **catálogo** (público) e um **microsserviço de autenticação** (login, papéis de usuário e recuperação de senha), que só é acessível pela rede interna do Docker.
+A aplicação é dividida em três serviços independentes: o **catálogo** (público), um **microsserviço de autenticação** (login, papéis de usuário e recuperação de senha) e um **microsserviço de logs** (auditoria, guardada num Redis). Os dois últimos só são acessíveis pela rede interna do Docker.
 
 ## Funcionalidades
 
@@ -12,28 +12,34 @@ A aplicação é dividida em dois serviços independentes: o **catálogo** (púb
 - **Comentários** visíveis pra qualquer usuário logado (como uma seção de reviews do filme), mas só o próprio autor — ou um admin — pode apagar um comentário.
 - **Papéis de usuário** (`usuario` / `admin`) geridos pelo serviço de autenticação.
 - **Recuperação de senha por e-mail**: link único, expira em 30 minutos e não pode ser reutilizado.
+- **Log de auditoria**: login, logout, favoritos, comentários, moderação e toda tentativa negada por permissão ficam registrados — só admin consulta.
 
 ## Arquitetura
 
 ```
 Navegador ── HTTPS ──> Catálogo (único ponto público)
+                        │      │
+                        │      │ rede interna do Docker
+                        │      ▼
+                        │   Serviço de autenticação ──> MariaDB
+                        │      │
+                        ▼      ▼
+                     Serviço de logs (eventos)
                            │
-                           │ rede interna do Docker
                            ▼
-                     Serviço de autenticação (sem porta pública)
-                           │
-                           ▼
-                        MariaDB
+                     Redis (Stream "auditoria")
 ```
 
 O catálogo é o único serviço com porta publicada. Login, cadastro, papéis e recuperação de senha
 passam pelo catálogo, mas são resolvidos internamente pelo serviço de autenticação — que nunca é
-alcançável de fora da rede Docker.
+alcançável de fora da rede Docker. Catálogo e auth mandam cada evento relevante pro serviço de
+logs, que é o único que escreve no Redis.
 
 ## Stack
 
 - **Backend**: Python + Flask (dois serviços separados)
 - **Banco de dados**: MariaDB
+- **Logs de auditoria**: Redis (Streams)
 - **Dados de filmes**: [TMDB API](https://www.themoviedb.org/documentation/api)
 - **E-mail**: Mailtrap (dev) / Brevo (produção)
 - **Deploy**: Docker, servido via Gunicorn
@@ -50,7 +56,7 @@ cp .env.example .env
 docker compose -f docker-compose.dev.yml up --build
 ```
 
-Acesse `http://localhost:5000`. Esse compose sobe um MariaDB descartável junto, só pra desenvolvimento — nada de produção usa esse banco.
+Acesse `http://localhost:5000`. Esse compose sobe um MariaDB e um Redis descartáveis junto, só pra desenvolvimento — nada de produção usa esses bancos.
 
 ## Estrutura do projeto
 
@@ -58,27 +64,33 @@ Acesse `http://localhost:5000`. Esse compose sobe um MariaDB descartável junto,
 app/                      # catálogo
   __init__.py             # cria e configura a aplicação Flask
   auth.py                 # login/cadastro/esqueci-senha (chama o serviço auth)
-  movies.py               # catálogo paginado, favoritar, comentar
+  movies.py               # catálogo paginado, favoritar, comentar, /admin/logs
+  auditoria.py            # envia eventos pro serviço de logs
   db.py                   # conexão com o MariaDB
   tmdb.py                 # integração com a API do TMDB
 auth-service/             # serviço de autenticação (sem porta pública)
   app.py                  # cadastro, login, papéis, esqueci-senha
   db.py                   # conexão com o MariaDB
   mail.py                 # envio do e-mail de recuperação de senha
-templates/                # páginas (login, cadastro, catálogo, esqueci/resetar senha)
+  auditoria.py            # envia eventos de login pro serviço de logs
+log-service/              # serviço de logs (sem porta pública)
+  app.py                  # grava (XADD) e lista (XREVRANGE) eventos no Redis
+templates/                # páginas (login, cadastro, catálogo, esqueci/resetar senha, logs)
 static/                   # CSS
 init.sql                  # schema do banco (usuarios, reset_tokens, favoritos, comentarios)
 Dockerfile                # imagem do catálogo
 auth-service/Dockerfile   # imagem do serviço de autenticação
-docker-compose.yml        # produção (Portainer) — os dois serviços + rede compartilhada
+log-service/Dockerfile    # imagem do serviço de logs
+docker-compose.yml        # produção (Portainer) — catálogo, auth, logs e Redis
 docker-compose.dev.yml    # desenvolvimento local
 ```
 
 ## Deploy
 
-As duas imagens são buildadas a partir de seus respectivos `Dockerfile`s e publicadas via
-`docker-compose.yml`. O serviço de autenticação **não tem porta publicada pro host** — só é
-alcançável pelo catálogo, internamente, pela rede padrão do projeto no Docker. Nenhuma credencial fica no
+As três imagens são buildadas a partir de seus respectivos `Dockerfile`s e publicadas via
+`docker-compose.yml`, junto com a imagem oficial do Redis. Os serviços de autenticação e de logs e o
+Redis **não têm porta publicada pro host** — só são alcançáveis internamente, pela rede padrão do
+projeto no Docker. Nenhuma credencial fica no
 repositório — tudo é injetado como variável de ambiente em tempo de deploy (ver `.env.example`
 pra lista completa: chave da TMDB, credenciais do MariaDB e credenciais SMTP).
 
@@ -96,6 +108,7 @@ pra lista completa: chave da TMDB, credenciais do MariaDB e credenciais SMTP).
 | Ver catálogo, favoritar, comentar | ✅ | ✅ |
 | Apagar o próprio comentário | ✅ | ✅ |
 | Apagar comentário de qualquer usuário (moderação) | ❌ | ✅ |
+| Consultar o log de auditoria (`/admin/logs`) | ❌ | ✅ |
 
 A checagem acontece sempre no backend, nunca só escondendo um botão na tela: chamar o endpoint
 `POST /comentarios/<id>/deletar` direto (por curl, Postman etc.) tentando apagar o comentário de
@@ -113,6 +126,45 @@ localmente e decidiria sozinho, sem chamada de rede extra a cada tentativa de ap
 comentário — mais rápido, mas com uma troca: se o papel de alguém mudasse (um admin virando
 usuário comum, por exemplo), isso só teria efeito depois que o token expirasse e fosse renovado,
 em vez de valer na hora, como acontece hoje.
+
+## Log de auditoria
+
+Cada ação relevante gera um evento que é enviado por HTTP pro `log-service`. Nenhum outro serviço
+escreve direto no Redis — assim o log fica centralizado num lugar só, separado do código do catálogo.
+
+| Ação | Quem registra | Quando |
+|---|---|---|
+| `login` / `login_falhou` | auth | tentativa de login (com e sem sucesso) |
+| `logout` | catálogo | usuário sai |
+| `favoritar` / `desfavoritar` | catálogo | clique no botão de favorito |
+| `comentar` | catálogo | novo comentário |
+| `apagar_comentario` | catálogo | autor apaga o próprio comentário |
+| `moderar_comentario` | catálogo | admin apaga o comentário de outra pessoa |
+| `acesso_negado` | catálogo | qualquer resposta `403` (rota e método ficam nos detalhes) |
+
+Cada evento tem `usuario_id`, `acao` e `timestamp` (UTC, definido pelo `log-service` na hora em que
+recebe o evento, pra que todos os serviços fiquem na mesma linha do tempo), além do `ip` de origem,
+do `servico` que mandou e de um campo livre de `detalhes`.
+
+O `acesso_negado` é registrado num handler de erro `403` do Flask, e não rota por rota — assim
+qualquer tentativa barrada entra no log, inclusive em rotas que forem criadas depois.
+
+### Por que Redis Streams
+
+Os eventos ficam num Redis Stream (`XADD auditoria * ...`). O Stream já gera um ID por evento a
+partir do horário do servidor, então a ordem cronológica vem de graça, e a consulta dos últimos N
+eventos é um único `XREVRANGE auditoria + - COUNT N`. O Redis roda com `appendonly yes` e um volume
+próprio, então os eventos sobrevivem a um restart do container.
+
+Se o `log-service` estiver fora do ar, as ações do usuário continuam funcionando normalmente — o
+envio do evento tem timeout curto e a falha é ignorada.
+
+### Consulta
+
+`GET /admin/logs` (link "Logs" no topo do catálogo, visível só pra admin) lista os últimos 50
+eventos, do mais recente pro mais antigo; `?n=` muda a quantidade (até 500). A rota usa o mesmo
+controle de acesso do resto do sistema: o catálogo pergunta o papel atual do usuário pro
+`auth-service` e devolve `403` pra quem não é admin — e essa própria tentativa também vai pro log.
 
 ---
 

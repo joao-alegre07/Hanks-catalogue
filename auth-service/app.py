@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from flask import Flask, jsonify, request
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from auditoria import registrar
 from db import get_connection
 from mail import enviar_email_reset
 
@@ -49,6 +50,7 @@ def login():
     dados = request.get_json(force=True, silent=True) or {}
     email = (dados.get("email") or "").strip().lower()
     senha = dados.get("senha") or ""
+    ip = dados.get("ip") or ""
 
     conn = get_connection()
     try:
@@ -62,8 +64,15 @@ def login():
         conn.close()
 
     if usuario is None or not check_password_hash(usuario["senha_hash"], senha):
+        registrar(
+            "login_falhou",
+            usuario_id=usuario["id"] if usuario else None,
+            ip=ip,
+            detalhes=email,
+        )
         return jsonify(erro="E-mail ou senha inválidos."), 401
 
+    registrar("login", usuario_id=usuario["id"], ip=ip)
     return jsonify(usuario_id=usuario["id"], nome=usuario["nome"], role=usuario["role"])
 
 

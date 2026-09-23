@@ -13,10 +13,12 @@ services:
     environment:
       DB_HOST: db
       AUTH_SERVICE_URL: http://auth:5001
+      LOG_SERVICE_URL: http://log:5002
       PUBLIC_APP_URL: http://localhost:5000
     depends_on:
       - db
       - auth
+      - log
 
   auth:
     build: ./auth-service
@@ -25,8 +27,23 @@ services:
     environment:
       DB_HOST: db
       PORT: 5001
+      LOG_SERVICE_URL: http://log:5002
     depends_on:
       - db
+      - log
+
+  log:
+    build: ./log-service
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
 
   db:
     image: mariadb:11
@@ -43,3 +60,4 @@ services:
 
 volumes:
   db_data:
+  redis_data:

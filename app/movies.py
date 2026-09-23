@@ -4,6 +4,7 @@ import os
 import requests
 from flask import Blueprint, abort, redirect, render_template, request, session, url_for
 
+from .auditoria import registrar, ultimos_eventos
 from .auth import login_required
 from .db import get_connection
 from .tmdb import buscar_filmes_tom_hanks
@@ -100,14 +101,18 @@ def favoritar():
                     "DELETE FROM favoritos WHERE usuario_id = %s AND tmdb_movie_id = %s",
                     (usuario_id, tmdb_movie_id),
                 )
+                acao = "desfavoritar"
             else:
                 cur.execute(
                     "INSERT INTO favoritos (usuario_id, tmdb_movie_id, titulo, poster_path) "
                     "VALUES (%s, %s, %s, %s)",
                     (usuario_id, tmdb_movie_id, titulo, poster_path),
                 )
+                acao = "favoritar"
     finally:
         conn.close()
+
+    registrar(acao, detalhes=f"filme {tmdb_movie_id} ({titulo})")
 
     return redirect(url_for("movies.catalogo", page=pagina))
 
@@ -130,8 +135,11 @@ def comentar():
                     "VALUES (%s, %s, %s, %s)",
                     (usuario_id, nome_usuario, tmdb_movie_id, texto),
                 )
+                comentario_id = cur.lastrowid
         finally:
             conn.close()
+
+        registrar("comentar", detalhes=f"comentário {comentario_id} no filme {tmdb_movie_id}")
 
     return redirect(url_for("movies.catalogo", page=pagina))
 
@@ -157,11 +165,37 @@ def deletar_comentario(comentario_id):
             # comentário de outra pessoa é ação exclusiva de admin -- e essa
             # checagem consulta o auth-service na hora (Padrão A), não confia
             # em nada que veio da sessão/cliente.
-            if comentario["usuario_id"] != usuario_id and not _usuario_e_admin(usuario_id):
+            proprio = comentario["usuario_id"] == usuario_id
+            if not proprio and not _usuario_e_admin(usuario_id):
                 abort(403)
 
             cur.execute("DELETE FROM comentarios WHERE id = %s", (comentario_id,))
     finally:
         conn.close()
 
+    if proprio:
+        registrar("apagar_comentario", detalhes=f"comentário {comentario_id}")
+    else:
+        registrar(
+            "moderar_comentario",
+            detalhes=f"comentário {comentario_id} do usuário {comentario['usuario_id']}",
+        )
+
     return redirect(url_for("movies.catalogo", page=pagina))
+
+
+@movies_bp.route("/admin/logs")
+@login_required
+def logs():
+    if not _usuario_e_admin(session["usuario_id"]):
+        abort(403)
+
+    n = min(max(request.args.get("n", 50, type=int), 1), 500)
+    try:
+        eventos = ultimos_eventos(n)
+        erro = None
+    except requests.exceptions.RequestException:
+        eventos = []
+        erro = "Serviço de logs indisponível."
+
+    return render_template("logs.html", eventos=eventos, n=n, erro=erro)

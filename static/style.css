@@ -160,3 +160,35 @@ body {
 }
 
 .paginacao a:hover { border-color: #e50914; }
+
+.topbar-links { display: flex; gap: 1rem; }
+.topbar-links a { color: #aaa; }
+
+.logs { padding: 0 2rem 2rem; }
+.logs-info { color: #999; font-size: 0.9rem; }
+.tabela-wrap { overflow-x: auto; }
+
+.tabela-logs {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  background: #1e1e2b;
+  border-radius: 8px;
+}
+.tabela-logs th,
+.tabela-logs td {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #2c2c3b;
+  white-space: nowrap;
+}
+.tabela-logs th { color: #999; font-weight: 600; }
+
+.acao {
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  background: #333;
+}
+.acao-acesso_negado .acao,
+.acao-login_falhou .acao { background: #5c1a1a; color: #ff6b6b; }
+.acao-moderar_comentario .acao { background: #4a3b12; color: #f0c040; }

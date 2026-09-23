@@ -2,7 +2,12 @@
 {% block body %}
 <header class="topbar">
   <h1>Filmes com Tom Hanks</h1>
-  <a class="logout" href="{{ url_for('auth.logout') }}">Sair</a>
+  <nav class="topbar-links">
+    {% if session.role == "admin" %}
+    <a href="{{ url_for('movies.logs') }}">Logs</a>
+    {% endif %}
+    <a class="logout" href="{{ url_for('auth.logout') }}">Sair</a>
+  </nav>
 </header>
 
 <main class="grid">

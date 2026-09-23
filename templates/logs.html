@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block body %}
+<header class="topbar">
+  <h1>Log de auditoria</h1>
+  <nav class="topbar-links">
+    <a href="{{ url_for('movies.catalogo') }}">Catálogo</a>
+    <a class="logout" href="{{ url_for('auth.logout') }}">Sair</a>
+  </nav>
+</header>
+
+<main class="logs">
+  <p class="logs-info">Últimos {{ n }} eventos, do mais recente pro mais antigo.</p>
+
+  {% if erro %}
+    <p class="erro">{{ erro }}</p>
+  {% elif not eventos %}
+    <p>Nenhum evento registrado ainda.</p>
+  {% else %}
+  <div class="tabela-wrap">
+    <table class="tabela-logs">
+      <thead>
+        <tr>
+          <th>Horário (UTC)</th>
+          <th>Usuário</th>
+          <th>Ação</th>
+          <th>Serviço</th>
+          <th>IP</th>
+          <th>Detalhes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in eventos %}
+        <tr class="acao-{{ e.acao }}">
+          <td>{{ e.timestamp }}</td>
+          <td>{{ e.usuario_id or "—" }}</td>
+          <td><span class="acao">{{ e.acao }}</span></td>
+          <td>{{ e.servico }}</td>
+          <td>{{ e.ip }}</td>
+          <td>{{ e.detalhes }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</main>
+{% endblock %}

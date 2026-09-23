@@ -4,6 +4,8 @@ from functools import wraps
 import requests
 from flask import Blueprint, redirect, render_template, request, session, url_for
 
+from .auditoria import ip_origem, registrar
+
 auth_bp = Blueprint("auth", __name__)
 
 
@@ -59,7 +61,9 @@ def login():
 
     try:
         resp = requests.post(
-            _auth_url("/login"), json={"email": email, "senha": senha}, timeout=5
+            _auth_url("/login"),
+            json={"email": email, "senha": senha, "ip": ip_origem()},
+            timeout=5,
         )
     except requests.exceptions.RequestException:
         return render_template("login.html", erro="Serviço de login indisponível. Tente de novo.")
@@ -78,6 +82,8 @@ def login():
 
 @auth_bp.route("/logout")
 def logout():
+    if "usuario_id" in session:
+        registrar("logout")
     session.clear()
     return redirect(url_for("auth.login"))
 
