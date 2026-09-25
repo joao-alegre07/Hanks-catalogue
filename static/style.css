@@ -192,3 +192,82 @@ body {
 .acao-acesso_negado .acao,
 .acao-login_falhou .acao { background: #5c1a1a; color: #ff6b6b; }
 .acao-moderar_comentario .acao { background: #4a3b12; color: #f0c040; }
+
+.autor { color: #eee; font-weight: 600; text-decoration: none; }
+.autor:hover { text-decoration: underline; }
+
+.perfil {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 0 2rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.perfil-topo { display: flex; align-items: center; gap: 1.5rem; }
+.perfil-topo h2 { margin: 0 0 0.5rem; }
+
+.avatar {
+  width: 128px;
+  height: 128px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 3px solid #e50914;
+}
+
+.avatar-vazio {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #1e1e2b;
+  font-size: 3rem;
+  color: #999;
+}
+
+.bio { margin: 0 0 0.5rem; white-space: pre-line; }
+.bio.vazia { color: #777; }
+.perfil-contagem { margin: 0; color: #999; font-size: 0.9rem; }
+
+.perfil-form {
+  background: #1e1e2b;
+  padding: 1.25rem;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.perfil-form h3 { margin: 0; }
+.perfil-form label { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.9rem; }
+.perfil-form textarea {
+  padding: 0.5rem;
+  border-radius: 4px;
+  border: 1px solid #444;
+  background: #12121a;
+  color: #eee;
+  font: inherit;
+  resize: vertical;
+}
+.perfil-form button {
+  align-self: flex-start;
+  padding: 0.5rem 1.25rem;
+  border: none;
+  border-radius: 4px;
+  background: #e50914;
+  color: white;
+  cursor: pointer;
+}
+
+.favoritos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 1rem;
+}
+.favorito img { width: 100%; border-radius: 6px; display: block; }
+.favorito p { font-size: 0.8rem; margin: 0.35rem 0 0; }
+
+@media (max-width: 600px) {
+  .perfil { padding: 0 1rem 1rem; }
+  .perfil-topo { flex-direction: column; text-align: center; }
+}

@@ -1,17 +1,18 @@
 # 🎬 Tom Hanks Catalog
 
-Catálogo web para descobrir e acompanhar a filmografia de Tom Hanks. Busca os filmes ao vivo na API do TMDB e deixa cada usuário favoritar e comentar, com dados isolados por conta.
+Catálogo web para descobrir e acompanhar a filmografia de Tom Hanks. Busca os filmes ao vivo na API do TMDB e deixa cada usuário favoritar, comentar e montar um perfil com foto, bio e os filmes favoritos.
 
-A aplicação é dividida em três serviços independentes: o **catálogo** (público), um **microsserviço de autenticação** (login, papéis de usuário e recuperação de senha) e um **microsserviço de logs** (auditoria, guardada num Redis). Os dois últimos só são acessíveis pela rede interna do Docker.
+A aplicação é dividida em três serviços independentes: o **catálogo** (público), um **microsserviço de autenticação** (login, papéis de usuário e recuperação de senha) e um **microsserviço de logs** (auditoria, guardada num Redis) e um **object storage** ([Garage](https://garagehq.deuxfleurs.fr/), compatível com S3) pras fotos de perfil. Só o catálogo tem porta pública; o resto só é acessível pela rede interna do Docker.
 
 ## Funcionalidades
 
 - **Cadastro e login** com senha com hash (nunca em texto puro), isolados num serviço próprio.
 - **Catálogo paginado** (20 filmes por página), sempre buscado em tempo real na API do TMDB — pôster, título, sinopse e data de lançamento nunca ficam desatualizados.
-- **Favoritos** privados por conta — o que a conta A favorita não aparece pra conta B.
+- **Favoritos** por conta — cada usuário tem a sua lista, que aparece no perfil dele.
 - **Comentários** visíveis pra qualquer usuário logado (como uma seção de reviews do filme), mas só o próprio autor — ou um admin — pode apagar um comentário.
 - **Papéis de usuário** (`usuario` / `admin`) geridos pelo serviço de autenticação.
 - **Recuperação de senha por e-mail**: link único, expira em 30 minutos e não pode ser reutilizado.
+- **Perfil** com foto, bio e filmes favoritados, no estilo de rede social. A foto vai pro object storage; o banco guarda só a chave do arquivo.
 - **Log de auditoria**: login, logout, favoritos, comentários, moderação e toda tentativa negada por permissão ficam registrados — só admin consulta.
 
 ## Arquitetura
@@ -28,6 +29,8 @@ Navegador ── HTTPS ──> Catálogo (único ponto público)
                            │
                            ▼
                      Redis (Stream "auditoria")
+
+Catálogo ──> Garage (bucket "fotos-perfil")   MariaDB guarda só a chave do objeto
 ```
 
 O catálogo é o único serviço com porta publicada. Login, cadastro, papéis e recuperação de senha
@@ -40,6 +43,7 @@ logs, que é o único que escreve no Redis.
 - **Backend**: Python + Flask (dois serviços separados)
 - **Banco de dados**: MariaDB
 - **Logs de auditoria**: Redis (Streams)
+- **Object storage**: Garage (API S3), acessado com `boto3`
 - **Dados de filmes**: [TMDB API](https://www.themoviedb.org/documentation/api)
 - **E-mail**: Mailtrap (dev) / Brevo (produção)
 - **Deploy**: Docker, servido via Gunicorn
@@ -56,7 +60,9 @@ cp .env.example .env
 docker compose -f docker-compose.dev.yml up --build
 ```
 
-Acesse `http://localhost:5000`. Esse compose sobe um MariaDB e um Redis descartáveis junto, só pra desenvolvimento — nada de produção usa esses bancos.
+Acesse `http://localhost:5000`. Esse compose sobe um MariaDB, um Redis e um Garage descartáveis junto, só pra desenvolvimento — nada de produção usa esses bancos.
+
+As chaves do Garage (`S3_ACCESS_KEY`, `S3_SECRET_KEY`, `GARAGE_RPC_SECRET`) são inventadas por você mesmo — o `.env.example` mostra o comando pra gerar cada uma. No primeiro boot o Garage cria o bucket e a chave de acesso com esses valores.
 
 ## Estrutura do projeto
 
@@ -65,6 +71,8 @@ app/                      # catálogo
   __init__.py             # cria e configura a aplicação Flask
   auth.py                 # login/cadastro/esqueci-senha (chama o serviço auth)
   movies.py               # catálogo paginado, favoritar, comentar, /admin/logs
+  perfil.py               # página de perfil, upload da foto, rota /fotos
+  storage.py              # envio e URLs assinadas do object storage (S3)
   auditoria.py            # envia eventos pro serviço de logs
   db.py                   # conexão com o MariaDB
   tmdb.py                 # integração com a API do TMDB
@@ -75,24 +83,25 @@ auth-service/             # serviço de autenticação (sem porta pública)
   auditoria.py            # envia eventos de login pro serviço de logs
 log-service/              # serviço de logs (sem porta pública)
   app.py                  # grava (XADD) e lista (XREVRANGE) eventos no Redis
-templates/                # páginas (login, cadastro, catálogo, esqueci/resetar senha, logs)
+garage/                   # imagem do Garage com o garage.toml (sem segredos)
+templates/                # páginas (login, cadastro, catálogo, perfil, esqueci/resetar senha, logs)
 static/                   # CSS
-init.sql                  # schema do banco (usuarios, reset_tokens, favoritos, comentarios)
+init.sql                  # schema do banco (usuarios, reset_tokens, favoritos, comentarios, perfis)
 Dockerfile                # imagem do catálogo
 auth-service/Dockerfile   # imagem do serviço de autenticação
 log-service/Dockerfile    # imagem do serviço de logs
-docker-compose.yml        # produção (Portainer) — catálogo, auth, logs e Redis
+docker-compose.yml        # produção (Portainer) — catálogo, auth, logs, Redis e Garage
 docker-compose.dev.yml    # desenvolvimento local
 ```
 
 ## Deploy
 
 As três imagens são buildadas a partir de seus respectivos `Dockerfile`s e publicadas via
-`docker-compose.yml`, junto com a imagem oficial do Redis. Os serviços de autenticação e de logs e o
-Redis **não têm porta publicada pro host** — só são alcançáveis internamente, pela rede padrão do
+`docker-compose.yml`, junto com a imagem oficial do Redis e a do Garage (com o `garage.toml` copiado pra
+dentro). Os serviços de autenticação e de logs, o Redis e o Garage **não têm porta publicada pro host** — só são alcançáveis internamente, pela rede padrão do
 projeto no Docker. Nenhuma credencial fica no
 repositório — tudo é injetado como variável de ambiente em tempo de deploy (ver `.env.example`
-pra lista completa: chave da TMDB, credenciais do MariaDB e credenciais SMTP).
+pra lista completa: chave da TMDB, credenciais do MariaDB, credenciais SMTP e chaves do Garage).
 
 ## Segurança
 
@@ -109,6 +118,9 @@ pra lista completa: chave da TMDB, credenciais do MariaDB e credenciais SMTP).
 | Apagar o próprio comentário | ✅ | ✅ |
 | Apagar comentário de qualquer usuário (moderação) | ❌ | ✅ |
 | Consultar o log de auditoria (`/admin/logs`) | ❌ | ✅ |
+| Ver o perfil de qualquer usuário | ✅ | ✅ |
+| Editar o próprio perfil | ✅ | ✅ |
+| Editar o perfil de outra pessoa | ❌ | ❌ |
 
 A checagem acontece sempre no backend, nunca só escondendo um botão na tela: chamar o endpoint
 `POST /comentarios/<id>/deletar` direto (por curl, Postman etc.) tentando apagar o comentário de
@@ -140,6 +152,7 @@ escreve direto no Redis — assim o log fica centralizado num lugar só, separad
 | `comentar` | catálogo | novo comentário |
 | `apagar_comentario` | catálogo | autor apaga o próprio comentário |
 | `moderar_comentario` | catálogo | admin apaga o comentário de outra pessoa |
+| `editar_perfil` | catálogo | usuário salva bio e/ou foto |
 | `acesso_negado` | catálogo | qualquer resposta `403` (rota e método ficam nos detalhes) |
 
 Cada evento tem `usuario_id`, `acao` e `timestamp` (UTC, definido pelo `log-service` na hora em que
@@ -165,6 +178,63 @@ envio do evento tem timeout curto e a falha é ignorada.
 eventos, do mais recente pro mais antigo; `?n=` muda a quantidade (até 500). A rota usa o mesmo
 controle de acesso do resto do sistema: o catálogo pergunta o papel atual do usuário pro
 `auth-service` e devolve `403` pra quem não é admin — e essa própria tentativa também vai pro log.
+
+## Perfil e fotos
+
+Cada usuário tem uma página de perfil (`/perfil/<id>`) com nome, foto, bio e os filmes que
+favoritou. O nome do autor de cada comentário no catálogo leva pro perfil dele.
+
+### Por que a foto não vai pro banco
+
+A imagem vai pro **Garage**, um object storage compatível com S3 (usado no lugar do MinIO). No
+MariaDB, a tabela `perfis` guarda só a bio e a **chave** do objeto — algo como
+`perfis/6/3f2a...c1.png`. Cada upload gera uma chave nova (com um UUID) e o objeto antigo é apagado
+depois que o banco já aponta pro novo.
+
+O Garage roda como mais um serviço do compose, sem porta publicada. O `--single-node
+--default-bucket` faz ele montar o layout de um nó só e criar o bucket e a chave de acesso no
+primeiro boot, a partir de `S3_BUCKET`, `S3_ACCESS_KEY` e `S3_SECRET_KEY` — as mesmas variáveis que o
+catálogo usa pra se conectar.
+
+### Validação do upload
+
+- **Tipo**: só JPG, PNG ou WebP. O backend confere os primeiros bytes do arquivo (a "assinatura" de
+  cada formato), e não a extensão nem o `Content-Type` que o navegador manda, que dá pra forjar à
+  vontade. Um `.png` que na verdade é texto é recusado.
+- **Tamanho**: no máximo 2 MB por foto. Além disso o Flask corta qualquer requisição acima de 5 MB
+  (`MAX_CONTENT_LENGTH`) antes mesmo de chegar na rota.
+- **Bio**: até 280 caracteres.
+
+### Exibição: URL pré-assinada
+
+O bucket é **privado**. Na hora de montar a página de perfil, o catálogo gera uma URL pré-assinada
+pra foto, válida por 10 minutos. Quem confere a assinatura e a validade é o próprio Garage: link
+adulterado ou vencido volta `403`.
+
+Como o Garage não tem porta pública, a URL assinada chega no navegador com o prefixo `/fotos` do
+catálogo, e essa rota só repassa a requisição pro Garage exatamente como veio (mesmo caminho, mesma
+query string com a assinatura). O catálogo não decide nada ali — só faz a ponte.
+
+**Por que pré-assinada e não bucket público:**
+
+- Com bucket público, qualquer um que descobrir a chave de um objeto consegue baixar o arquivo pra
+  sempre, logado ou não. Em troca é mais simples: a URL é fixa, o navegador faz cache à vontade e
+  não tem custo de gerar assinatura a cada página.
+- Com URL pré-assinada, só quem abriu um perfil estando logado recebe um link, e esse link morre em
+  10 minutos. Se alguém copiar o endereço da foto e mandar pra fora, ele para de funcionar logo. O
+  preço é que a URL muda a cada carregamento da página (o cache do navegador ajuda menos) e o
+  backend precisa gerar a assinatura sempre que monta o perfil.
+
+Como a foto é de uma pessoa e o resto do sistema já exige login, controlar o acesso valeu mais do
+que a simplicidade do bucket público.
+
+### Quem pode editar
+
+Qualquer usuário logado vê o perfil de qualquer outro, mas só edita o próprio. A rota
+`POST /perfil/<id>/editar` compara o `<id>` da URL com o `usuario_id` guardado na sessão (definida
+pelo servidor no login) e responde `403` se forem diferentes — nem admin edita o perfil de outra
+pessoa. O id que vem na requisição nunca decide de quem é o perfil salvo; ele só é conferido. Essa
+negativa passa pelo mesmo handler de `403` e entra no log como `acesso_negado`.
 
 ---
 

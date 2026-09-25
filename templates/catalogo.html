@@ -3,6 +3,7 @@
 <header class="topbar">
   <h1>Filmes com Tom Hanks</h1>
   <nav class="topbar-links">
+    <a href="{{ url_for('perfil.meu_perfil') }}">Meu perfil</a>
     {% if session.role == "admin" %}
     <a href="{{ url_for('movies.logs') }}">Logs</a>
     {% endif %}
@@ -32,7 +33,7 @@
       <div class="comentarios">
         {% for c in filme.comentarios %}
           <div class="comentario">
-            <p><strong>{{ c.nome_usuario }}:</strong> {{ c.texto }}</p>
+            <p><a class="autor" href="{{ url_for('perfil.ver', usuario_id=c.usuario_id) }}">{{ c.nome_usuario }}</a>: {{ c.texto }}</p>
             {% if c.pode_apagar %}
             <form method="post" action="{{ url_for('movies.deletar_comentario', comentario_id=c.id) }}">
               <input type="hidden" name="page" value="{{ pagina }}">

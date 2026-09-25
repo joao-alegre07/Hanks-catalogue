@@ -23,9 +23,14 @@ services:
       AUTH_SERVICE_URL: http://auth:5001
       LOG_SERVICE_URL: http://log:5002
       PUBLIC_APP_URL: ${PUBLIC_APP_URL}
+      S3_ENDPOINT: http://garage:3900
+      S3_BUCKET: ${S3_BUCKET}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
     depends_on:
       - auth
       - log
+      - garage
     restart: unless-stopped
 
   # Serviço de autenticação: login, cadastro, papéis (role) e esqueci-senha.
@@ -69,5 +74,22 @@ services:
       - redis_data:/data
     restart: unless-stopped
 
+  # Object storage das fotos de perfil (Garage, compatível com S3, no lugar
+  # do MinIO). Também sem porta publicada: o catálogo envia as fotos e as
+  # URLs assinadas chegam no navegador passando pela rota /fotos do catálogo.
+  # O --default-bucket cria o bucket e a chave de acesso no primeiro boot a
+  # partir das variáveis GARAGE_DEFAULT_*.
+  garage:
+    build: ./garage
+    environment:
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET}
+      GARAGE_DEFAULT_BUCKET: ${S3_BUCKET}
+      GARAGE_DEFAULT_ACCESS_KEY: ${S3_ACCESS_KEY}
+      GARAGE_DEFAULT_SECRET_KEY: ${S3_SECRET_KEY}
+    volumes:
+      - garage_data:/var/lib/garage
+    restart: unless-stopped
+
 volumes:
   redis_data:
+  garage_data:

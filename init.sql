@@ -38,3 +38,13 @@ CREATE TABLE IF NOT EXISTS comentarios (
   criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
 );
+
+-- Perfil do usuário: a foto fica no Garage (object storage), aqui só vai a
+-- chave do objeto dentro do bucket.
+CREATE TABLE IF NOT EXISTS perfis (
+  usuario_id INT PRIMARY KEY,
+  bio VARCHAR(280) NOT NULL DEFAULT '',
+  foto_key VARCHAR(255),
+  atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+);
