@@ -2,9 +2,43 @@ import os
 from datetime import datetime, timezone
 
 import redis
+from flasgger import Swagger
 from flask import Flask, jsonify, request
 
 app = Flask(__name__)
+app.config["SWAGGER"] = {"title": "log-service", "openapi": "3.0.3"}
+Swagger(
+    app,
+    template={
+        "info": {
+            "title": "log-service",
+            "version": "1.0",
+            "description": "Serviço interno de auditoria. Recebe eventos do catálogo e do "
+            "auth-service e guarda num Redis Stream. Sem porta pública: em produção só é "
+            "alcançado pela rede do Docker.",
+        },
+        "components": {
+            "schemas": {
+                "Evento": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string", "example": "1759268412345-0"},
+                        "usuario_id": {"type": "string", "example": "6"},
+                        "acao": {"type": "string", "example": "favoritar"},
+                        "timestamp": {"type": "string", "example": "2026-09-30T21:40:12+00:00"},
+                        "ip": {"type": "string", "example": "177.10.20.30"},
+                        "servico": {"type": "string", "example": "catalogo"},
+                        "detalhes": {"type": "string", "example": "filme 13 (Forrest Gump)"},
+                    },
+                },
+                "Erro": {
+                    "type": "object",
+                    "properties": {"erro": {"type": "string"}},
+                },
+            }
+        },
+    },
+)
 
 STREAM = "auditoria"
 
@@ -13,6 +47,47 @@ r = redis.Redis.from_url(os.environ.get("REDIS_URL", "redis://redis:6379/0"), de
 
 @app.route("/eventos", methods=["POST"])
 def registrar():
+    """Registra um evento de auditoria
+    ---
+    tags: [eventos]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [acao]
+            properties:
+              acao:
+                type: string
+                example: favoritar
+              usuario_id:
+                type: integer
+                nullable: true
+                example: 6
+              ip:
+                type: string
+                example: 177.10.20.30
+              servico:
+                type: string
+                example: catalogo
+              detalhes:
+                type: string
+                example: filme 13 (Forrest Gump)
+    responses:
+      201:
+        description: Evento gravado. O timestamp é definido pelo log-service.
+        content:
+          application/json:
+            example: {"id": "1759268412345-0"}
+      400:
+        description: Faltou o campo acao.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Erro'
+            example: {"erro": "Campo 'acao' é obrigatório."}
+    """
     dados = request.get_json(force=True, silent=True) or {}
     acao = (dados.get("acao") or "").strip()
     if not acao:
@@ -34,6 +109,28 @@ def registrar():
 
 @app.route("/eventos", methods=["GET"])
 def listar():
+    """Lista os últimos eventos, do mais recente pro mais antigo
+    ---
+    tags: [eventos]
+    parameters:
+      - name: n
+        in: query
+        description: Quantidade de eventos (de 1 a 500; fora disso é ajustado pro limite).
+        schema:
+          type: integer
+          default: 50
+          minimum: 1
+          maximum: 500
+    responses:
+      200:
+        description: Lista de eventos.
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/Evento'
+    """
     n = min(max(request.args.get("n", 50, type=int), 1), 500)
     eventos = [{"id": evento_id, **campos} for evento_id, campos in r.xrevrange(STREAM, count=n)]
     return jsonify(eventos)

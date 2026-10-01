@@ -1,0 +1,481 @@
+openapi: 3.0.3
+info:
+  title: Tom Hanks Catalog
+  version: "1.0"
+  description: |
+    Rotas públicas do catálogo. É uma aplicação web tradicional: as rotas devolvem páginas HTML
+    e os formulários são enviados como `application/x-www-form-urlencoded` (ou `multipart/form-data`
+    no upload da foto). Depois de uma ação que dá certo, a resposta é um redirecionamento `302`.
+
+    **Pra usar o "Try it out":** faça login no site nesse mesmo navegador (ou pelo próprio
+    `POST /login` aqui embaixo). A sessão fica no cookie `session`, que o navegador já manda junto.
+    Sem login, as rotas protegidas redirecionam pra `/login` — como o navegador segue o
+    redirecionamento sozinho, o Swagger mostra o HTML da página de login.
+
+    O auth-service e o log-service têm documentação própria, em `/apidocs` de cada um
+    (só acessível rodando localmente, já que eles não têm porta pública).
+
+tags:
+  - name: contas
+    description: Cadastro, login e recuperação de senha (repassados pro auth-service)
+  - name: catálogo
+    description: Filmes, favoritos e comentários
+  - name: perfil
+    description: Página de perfil e foto
+  - name: admin
+    description: Só pra quem tem papel admin
+
+components:
+  securitySchemes:
+    sessao:
+      type: apiKey
+      in: cookie
+      name: session
+      description: Cookie de sessão criado no login.
+  responses:
+    Html:
+      description: Página HTML.
+      content:
+        text/html:
+          schema:
+            type: string
+    RedirLogin:
+      description: Sem login. Redireciona pra `/login`.
+      headers:
+        Location:
+          schema:
+            type: string
+            example: /login
+    CampoFaltando:
+      description: Faltou um campo obrigatório do formulário.
+    Proibido:
+      description: Sem permissão. A tentativa é registrada no log como `acesso_negado`.
+    NaoEncontrado:
+      description: Não existe.
+
+paths:
+  /cadastro:
+    get:
+      tags: [contas]
+      summary: Formulário de cadastro
+      responses:
+        "200":
+          $ref: "#/components/responses/Html"
+    post:
+      tags: [contas]
+      summary: Cria uma conta
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [nome, email, senha]
+              properties:
+                nome:
+                  type: string
+                  example: Maria
+                email:
+                  type: string
+                  example: maria@exemplo.com
+                senha:
+                  type: string
+                  format: password
+      responses:
+        "302":
+          description: Conta criada. Redireciona pra `/login`.
+          headers:
+            Location:
+              schema:
+                type: string
+                example: /login
+        "200":
+          description: >
+            Não cadastrou (campo vazio, e-mail já usado ou auth-service fora do ar).
+            Volta o formulário com a mensagem de erro.
+          content:
+            text/html:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/CampoFaltando"
+
+  /login:
+    get:
+      tags: [contas]
+      summary: Formulário de login
+      responses:
+        "200":
+          $ref: "#/components/responses/Html"
+    post:
+      tags: [contas]
+      summary: Faz login
+      description: Confere a senha no auth-service e, se estiver certa, cria o cookie de sessão.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [email, senha]
+              properties:
+                email:
+                  type: string
+                  example: maria@exemplo.com
+                senha:
+                  type: string
+                  format: password
+      responses:
+        "302":
+          description: Login certo. Cria o cookie `session` e redireciona pro catálogo.
+          headers:
+            Location:
+              schema:
+                type: string
+                example: /
+            Set-Cookie:
+              schema:
+                type: string
+                example: session=eyJub21lIjoi...; HttpOnly; Path=/
+        "200":
+          description: E-mail ou senha errados. Volta o formulário com a mensagem de erro.
+          content:
+            text/html:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/CampoFaltando"
+
+  /logout:
+    get:
+      tags: [contas]
+      summary: Sai da conta
+      responses:
+        "302":
+          description: Apaga a sessão e redireciona pra `/login`.
+
+  /esqueci-senha:
+    get:
+      tags: [contas]
+      summary: Formulário de esqueci a senha
+      responses:
+        "200":
+          $ref: "#/components/responses/Html"
+    post:
+      tags: [contas]
+      summary: Pede o link de redefinição por e-mail
+      description: >
+        A resposta é sempre a mesma, com ou sem conta cadastrada nesse e-mail, pra não dar pra
+        descobrir quem tem conta.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  example: maria@exemplo.com
+      responses:
+        "200":
+          description: Página com a mensagem "Se esse e-mail estiver cadastrado, você vai receber um link".
+          content:
+            text/html:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/CampoFaltando"
+
+  /resetar-senha:
+    get:
+      tags: [contas]
+      summary: Formulário de nova senha (link do e-mail)
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/Html"
+    post:
+      tags: [contas]
+      summary: Troca a senha
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [token, nova_senha]
+              properties:
+                token:
+                  type: string
+                nova_senha:
+                  type: string
+                  format: password
+      responses:
+        "302":
+          description: Senha trocada. Redireciona pra `/login?redefinida=1`.
+        "200":
+          description: Token inválido, já usado ou expirado. Volta o formulário com a mensagem de erro.
+          content:
+            text/html:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/CampoFaltando"
+
+  /:
+    get:
+      tags: [catálogo]
+      summary: Catálogo paginado
+      description: 20 filmes por página, buscados na hora na API do TMDB.
+      security:
+        - sessao: []
+      parameters:
+        - name: page
+          in: query
+          description: Número da página. Fora do intervalo, é ajustado pra primeira ou última.
+          schema:
+            type: integer
+            default: 1
+      responses:
+        "200":
+          $ref: "#/components/responses/Html"
+        "302":
+          $ref: "#/components/responses/RedirLogin"
+
+  /favoritar:
+    post:
+      tags: [catálogo]
+      summary: Favorita ou desfavorita um filme
+      description: Se o filme já está nos favoritos, sai; se não está, entra.
+      security:
+        - sessao: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [tmdb_movie_id, titulo]
+              properties:
+                tmdb_movie_id:
+                  type: integer
+                  example: 13
+                titulo:
+                  type: string
+                  example: Forrest Gump
+                poster_path:
+                  type: string
+                  example: /arw2vcBveWOVZr6pxd9XTd1TdQa.jpg
+                page:
+                  type: integer
+                  description: Página do catálogo pra onde voltar.
+                  example: 1
+      responses:
+        "302":
+          description: Feito. Volta pro catálogo na mesma página (ou pra `/login`, sem sessão).
+        "400":
+          $ref: "#/components/responses/CampoFaltando"
+
+  /comentar:
+    post:
+      tags: [catálogo]
+      summary: Comenta num filme
+      description: Comentário vazio é ignorado.
+      security:
+        - sessao: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [tmdb_movie_id, texto]
+              properties:
+                tmdb_movie_id:
+                  type: integer
+                  example: 13
+                texto:
+                  type: string
+                  example: Um dos melhores dele.
+                page:
+                  type: integer
+                  example: 1
+      responses:
+        "302":
+          description: Feito. Volta pro catálogo na mesma página (ou pra `/login`, sem sessão).
+        "400":
+          $ref: "#/components/responses/CampoFaltando"
+
+  /comentarios/{comentario_id}/deletar:
+    post:
+      tags: [catálogo]
+      summary: Apaga um comentário
+      description: >
+        O autor pode apagar o próprio comentário. Pra apagar o de outra pessoa, o catálogo pergunta
+        o papel atual do usuário pro auth-service, e só admin passa.
+      security:
+        - sessao: []
+      parameters:
+        - name: comentario_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            example: 42
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                page:
+                  type: integer
+                  example: 1
+      responses:
+        "302":
+          description: Apagado. Volta pro catálogo (ou pra `/login`, sem sessão).
+        "403":
+          $ref: "#/components/responses/Proibido"
+        "404":
+          $ref: "#/components/responses/NaoEncontrado"
+
+  /admin/logs:
+    get:
+      tags: [admin]
+      summary: Log de auditoria
+      description: >
+        Últimos eventos do log-service, do mais recente pro mais antigo. Se o log-service estiver
+        fora do ar, a página abre com um aviso em vez da lista.
+      security:
+        - sessao: []
+      parameters:
+        - name: "n"
+          in: query
+          description: Quantos eventos mostrar (de 1 a 500).
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          $ref: "#/components/responses/Html"
+        "302":
+          $ref: "#/components/responses/RedirLogin"
+        "403":
+          $ref: "#/components/responses/Proibido"
+
+  /perfil:
+    get:
+      tags: [perfil]
+      summary: Meu perfil
+      security:
+        - sessao: []
+      responses:
+        "302":
+          description: Redireciona pra `/perfil/<seu id>` (ou pra `/login`, sem sessão).
+
+  /perfil/{usuario_id}:
+    get:
+      tags: [perfil]
+      summary: Perfil de um usuário
+      description: Nome, foto, bio e filmes favoritados. Qualquer usuário logado vê qualquer perfil.
+      security:
+        - sessao: []
+      parameters:
+        - name: usuario_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            example: 1
+      responses:
+        "200":
+          $ref: "#/components/responses/Html"
+        "302":
+          $ref: "#/components/responses/RedirLogin"
+        "404":
+          $ref: "#/components/responses/NaoEncontrado"
+        "503":
+          description: auth-service fora do ar.
+
+  /perfil/{usuario_id}/editar:
+    post:
+      tags: [perfil]
+      summary: Edita bio e foto do próprio perfil
+      description: >
+        O id da URL precisa ser o mesmo da sessão — nem admin edita o perfil de outra pessoa.
+        A foto é conferida pelos primeiros bytes do arquivo, não pela extensão.
+      security:
+        - sessao: []
+      parameters:
+        - name: usuario_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            example: 1
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                bio:
+                  type: string
+                  maxLength: 280
+                  example: Fã de Náufrago.
+                foto:
+                  type: string
+                  format: binary
+                  description: JPG, PNG ou WebP de até 2 MB. Opcional; sem foto, mantém a atual.
+      responses:
+        "302":
+          description: Salvo. Redireciona pro perfil (ou pra `/login`, sem sessão).
+        "400":
+          description: Bio com mais de 280 caracteres, foto acima de 2 MB ou arquivo que não é JPG/PNG/WebP.
+          content:
+            text/html:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Proibido"
+        "413":
+          description: Requisição inteira acima de 5 MB.
+        "503":
+          description: Não conseguiu salvar a foto no object storage.
+
+  /fotos/{caminho}:
+    get:
+      tags: [perfil]
+      summary: Foto de perfil (URL pré-assinada)
+      description: >
+        Repassa a URL assinada pro Garage. Essa URL é gerada na página de perfil e vale 10 minutos;
+        a query string traz a assinatura (`X-Amz-Algorithm`, `X-Amz-Credential`, `X-Amz-Date`,
+        `X-Amz-Expires`, `X-Amz-SignedHeaders`, `X-Amz-Signature`).
+      parameters:
+        - name: caminho
+          in: path
+          required: true
+          schema:
+            type: string
+            example: fotos-perfil/perfis/1/3f2a9c1e.png
+      responses:
+        "200":
+          description: A imagem.
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        "403":
+          description: Assinatura inválida ou vencida.
+        "404":
+          $ref: "#/components/responses/NaoEncontrado"
+        "503":
+          description: Object storage fora do ar.

@@ -1,5 +1,6 @@
 import os
 
+from flasgger import Swagger
 from flask import Flask, request
 
 from .auditoria import registrar
@@ -19,6 +20,11 @@ def create_app():
     app.register_blueprint(auth_bp)
     app.register_blueprint(movies_bp)
     app.register_blueprint(perfil_bp)
+
+    # As rotas do catálogo misturam página (GET) e formulário (POST) na mesma
+    # função, então a spec fica num arquivo só em vez de docstring por rota.
+    app.config["SWAGGER"] = {"title": "Tom Hanks Catalog", "openapi": "3.0.3"}
+    Swagger(app, template_file=os.path.join(os.path.dirname(__file__), "openapi.yml"))
 
     # Todo 403 do catálogo passa por aqui, então nenhuma tentativa negada
     # escapa do log, não importa em qual rota aconteceu.

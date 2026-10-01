@@ -46,6 +46,7 @@ logs, que é o único que escreve no Redis.
 - **Object storage**: Garage (API S3), acessado com `boto3`
 - **Dados de filmes**: [TMDB API](https://www.themoviedb.org/documentation/api)
 - **E-mail**: Mailtrap (dev) / Brevo (produção)
+- **Documentação da API**: OpenAPI 3 + Swagger UI, via [flasgger](https://github.com/flasgger/flasgger)
 - **Deploy**: Docker, servido via Gunicorn
 
 ## Rodando localmente
@@ -76,6 +77,7 @@ app/                      # catálogo
   auditoria.py            # envia eventos pro serviço de logs
   db.py                   # conexão com o MariaDB
   tmdb.py                 # integração com a API do TMDB
+  openapi.yml             # spec OpenAPI das rotas do catálogo
 auth-service/             # serviço de autenticação (sem porta pública)
   app.py                  # cadastro, login, papéis, esqueci-senha
   db.py                   # conexão com o MariaDB
@@ -235,6 +237,30 @@ Qualquer usuário logado vê o perfil de qualquer outro, mas só edita o própri
 pelo servidor no login) e responde `403` se forem diferentes — nem admin edita o perfil de outra
 pessoa. O id que vem na requisição nunca decide de quem é o perfil salvo; ele só é conferido. Essa
 negativa passa pelo mesmo handler de `403` e entra no log como `acesso_negado`.
+
+## Documentação da API (Swagger)
+
+Os três serviços têm a API descrita em OpenAPI 3 e servem um Swagger UI em `/apidocs`, gerado pelo
+flasgger. A spec em JSON fica em `/apispec_1.json` de cada um.
+
+| Serviço | Swagger UI | Onde a spec está escrita |
+|---|---|---|
+| Catálogo | [joao-alegre-isw055.lapps.studio/apidocs](https://joao-alegre-isw055.lapps.studio/apidocs/) | [`app/openapi.yml`](app/openapi.yml) |
+| auth-service | `http://localhost:5001/apidocs/` (só local) | docstring YAML em cada rota de [`auth-service/app.py`](auth-service/app.py) |
+| log-service | `http://localhost:5002/apidocs/` (só local) | docstring YAML em cada rota de [`log-service/app.py`](log-service/app.py) |
+
+Cada rota tem método, parâmetros, corpo esperado e todas as respostas possíveis com exemplo,
+incluindo os erros (`400`, `401`, `403`, `404`, `409`, `413`, `503`, dependendo da rota).
+
+O catálogo é o único com link público. O auth-service e o log-service continuam sem porta publicada
+em produção, então o Swagger deles só abre rodando o `docker-compose.dev.yml`, que expõe as portas
+5001 e 5002 só pra isso.
+
+No catálogo a spec fica num arquivo separado em vez de docstring porque várias rotas atendem GET
+(a página) e POST (o formulário) na mesma função. Essas rotas devolvem HTML e recebem formulário,
+não JSON, e a spec descreve isso do jeito que é. Pro "Try it out", faça login no site antes (ou pelo
+próprio `POST /login` no Swagger): o navegador manda o cookie de sessão junto e as rotas protegidas
+respondem com os seus dados. Sem login elas redirecionam pra `/login`.
 
 ---
 
