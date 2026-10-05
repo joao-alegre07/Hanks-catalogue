@@ -1,5 +1,7 @@
 # 🎬 Tom Hanks Catalog
 
+[![ci-cd](https://github.com/joao-alegre07/Hanks-catalogue/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/joao-alegre07/Hanks-catalogue/actions/workflows/ci-cd.yml)
+
 Catálogo web para descobrir e acompanhar a filmografia de Tom Hanks. Busca os filmes ao vivo na API do TMDB e deixa cada usuário favoritar, comentar e montar um perfil com foto, bio e os filmes favoritos.
 
 A aplicação é dividida em três serviços independentes: o **catálogo** (público), um **microsserviço de autenticação** (login, papéis de usuário e recuperação de senha) e um **microsserviço de logs** (auditoria, guardada num Redis) e um **object storage** ([Garage](https://garagehq.deuxfleurs.fr/), compatível com S3) pras fotos de perfil. Só o catálogo tem porta pública; o resto só é acessível pela rede interna do Docker.
@@ -48,6 +50,8 @@ logs, que é o único que escreve no Redis.
 - **E-mail**: Mailtrap (dev) / Brevo (produção)
 - **Documentação da API**: OpenAPI 3 + Swagger UI, via [flasgger](https://github.com/flasgger/flasgger)
 - **Deploy**: Docker, servido via Gunicorn
+- **CI/CD**: GitHub Actions, imagens no GHCR, deploy pela API do Portainer
+- **Testes**: pytest (com `fakeredis` no log-service)
 
 ## Rodando localmente
 
@@ -86,6 +90,8 @@ auth-service/             # serviço de autenticação (sem porta pública)
 log-service/              # serviço de logs (sem porta pública)
   app.py                  # grava (XADD) e lista (XREVRANGE) eventos no Redis
 garage/                   # imagem do Garage com o garage.toml (sem segredos)
+tests/                    # testes do catálogo (auth-service/tests e log-service/tests pros outros dois)
+.github/workflows/ci-cd.yml  # pipeline: testes -> imagens no GHCR -> deploy no Portainer
 templates/                # páginas (login, cadastro, catálogo, perfil, esqueci/resetar senha, logs)
 static/                   # CSS
 init.sql                  # schema do banco (usuarios, reset_tokens, favoritos, comentarios, perfis)
@@ -98,9 +104,9 @@ docker-compose.dev.yml    # desenvolvimento local
 
 ## Deploy
 
-As três imagens são buildadas a partir de seus respectivos `Dockerfile`s e publicadas via
-`docker-compose.yml`, junto com a imagem oficial do Redis e a do Garage (com o `garage.toml` copiado pra
-dentro). Os serviços de autenticação e de logs, o Redis e o Garage **não têm porta publicada pro host** — só são alcançáveis internamente, pela rede padrão do
+As imagens do catálogo, do auth, do log e do Garage (com o `garage.toml` copiado pra dentro) são
+buildadas pelo GitHub Actions e publicadas no GHCR; o `docker-compose.yml` só puxa essas imagens,
+junto com a imagem oficial do Redis — nada é buildado no servidor (ver [CI/CD](#cicd)). Os serviços de autenticação e de logs, o Redis e o Garage **não têm porta publicada pro host** — só são alcançáveis internamente, pela rede padrão do
 projeto no Docker. Nenhuma credencial fica no
 repositório — tudo é injetado como variável de ambiente em tempo de deploy (ver `.env.example`
 pra lista completa: chave da TMDB, credenciais do MariaDB, credenciais SMTP e chaves do Garage).
@@ -261,6 +267,70 @@ No catálogo a spec fica num arquivo separado em vez de docstring porque várias
 não JSON, e a spec descreve isso do jeito que é. Pro "Try it out", faça login no site antes (ou pelo
 próprio `POST /login` no Swagger): o navegador manda o cookie de sessão junto e as rotas protegidas
 respondem com os seus dados. Sem login elas redirecionam pra `/login`.
+
+## CI/CD
+
+Nenhum deploy é feito à mão. A cada push na `main`, o workflow
+[`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml) roda três jobs em sequência — se um
+falha, os seguintes nem começam:
+
+```
+push na main ──> testes ──> imagens (4 em paralelo) ──> deploy
+                   │              │                       │
+                 pytest     build + push no GHCR     API do Portainer:
+                            sha-<commit> e latest    IMAGE_TAG=sha-<commit>
+                                                     + pull e redeploy
+```
+
+1. **testes** — roda o pytest dos três serviços. Os testes não dependem de nada externo: o catálogo
+   tem as chamadas HTTP pro auth e pro log trocadas por respostas falsas, o auth-service usa uma
+   conexão de banco falsa e o log-service usa o `fakeredis` no lugar do Redis. Cobrem login certo e
+   errado, cadastro (com e-mail repetido, campos vazios e papel sempre `usuario`), o `403` ao editar o
+   perfil de outra pessoa indo pro log, token de senha já usado e a ordem dos eventos de auditoria.
+2. **imagens** — builda as quatro imagens e publica no GHCR com duas tags: `sha-<7 primeiros
+   caracteres do commit>` e `latest`. Em pull request o build roda (pra pegar Dockerfile quebrado),
+   mas nada é publicado.
+3. **deploy** — chama a API do Portainer, troca a variável `IMAGE_TAG` da stack pela tag do commit e
+   manda fazer *pull and redeploy*. Como o compose usa
+   `ghcr.io/joao-alegre07/hanks-catalogue-app:${IMAGE_TAG:-latest}`, o container sobe com a imagem
+   exata daquele commit — dá pra saber o que está em produção só olhando a tag no `docker ps`.
+
+| Imagem | |
+|---|---|
+| `ghcr.io/joao-alegre07/hanks-catalogue-app` | catálogo |
+| `ghcr.io/joao-alegre07/hanks-catalogue-auth` | auth-service |
+| `ghcr.io/joao-alegre07/hanks-catalogue-log` | log-service |
+| `ghcr.io/joao-alegre07/hanks-catalogue-garage` | Garage com o `garage.toml` |
+
+Execuções do pipeline: [aba Actions](https://github.com/joao-alegre07/Hanks-catalogue/actions/workflows/ci-cd.yml).
+
+### Segredos
+
+Nenhuma credencial aparece no workflow, nos Dockerfiles ou dentro das imagens (o `.dockerignore`
+deixa o `.env` local de fora do build). Cada segredo fica num lugar só:
+
+| Onde | O quê |
+|---|---|
+| GitHub → Settings → Secrets and variables → Actions | `PORTAINER_URL`, `PORTAINER_TOKEN` (access token criado no Portainer, em *My account*), `PORTAINER_STACK_ID` |
+| Automático do GitHub Actions | `GITHUB_TOKEN`, usado só pra publicar no GHCR (permissão `packages: write` só no job de imagens) |
+| Portainer → stack → Environment variables | senhas do banco, chave da TMDB, SMTP, chaves do Garage e o `IMAGE_TAG` (que o próprio workflow atualiza) |
+
+O job de deploy lê as variáveis atuais da stack, troca só o `IMAGE_TAG` e devolve o resto pro
+Portainer do jeito que estava, sem imprimir nada no log. Os pacotes no GHCR são públicos (o
+repositório também é), então o servidor puxa as imagens sem precisar de login no registry.
+
+Se os três secrets do Portainer não estiverem configurados, o job de deploy só avisa e termina sem
+erro: as imagens continuam sendo publicadas, e a atualização vira um clique no Portainer (editar o
+`IMAGE_TAG` da stack pra tag do commit e *Pull and redeploy*).
+
+### Rodando os testes localmente
+
+```bash
+pip install -r requirements.txt -r auth-service/requirements.txt -r log-service/requirements.txt -r requirements-dev.txt
+python -m pytest tests
+cd auth-service && python -m pytest && cd ..
+cd log-service && python -m pytest && cd ..
+```
 
 ---
 

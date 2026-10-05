@@ -1,0 +1,128 @@
+name: ci-cd
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  IMAGEM_BASE: ghcr.io/joao-alegre07/hanks-catalogue
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: instala dependências
+        run: |
+          pip install -r requirements.txt -r auth-service/requirements.txt \
+            -r log-service/requirements.txt -r requirements-dev.txt
+
+      - name: testes do catálogo
+        run: python -m pytest -v tests
+
+      - name: testes do auth-service
+        working-directory: auth-service
+        run: python -m pytest -v
+
+      - name: testes do log-service
+        working-directory: log-service
+        run: python -m pytest -v
+
+  imagens:
+    needs: testes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - servico: app
+            contexto: .
+          - servico: auth
+            contexto: ./auth-service
+          - servico: log
+            contexto: ./log-service
+          - servico: garage
+            contexto: ./garage
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: login no ghcr
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # sha-<7 primeiros caracteres do commit> sempre; latest só na main.
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGEM_BASE }}-${{ matrix.servico }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      # Em pull request só builda (pra ver se o Dockerfile não quebrou), sem publicar.
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.contexto }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.servico }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.servico }}
+
+  deploy:
+    needs: imagens
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      # Troca a variável IMAGE_TAG da stack pela tag desse commit e manda o
+      # Portainer puxar o repositório e as imagens de novo. As outras variáveis
+      # da stack (senhas, chaves) vêm do próprio Portainer e voltam pra ele do
+      # jeito que estavam -- nada disso passa pelo log.
+      - name: atualiza a stack no portainer
+        env:
+          PORTAINER_URL: ${{ secrets.PORTAINER_URL }}
+          PORTAINER_TOKEN: ${{ secrets.PORTAINER_TOKEN }}
+          PORTAINER_STACK_ID: ${{ secrets.PORTAINER_STACK_ID }}
+        run: |
+          if [ -z "$PORTAINER_URL" ] || [ -z "$PORTAINER_TOKEN" ] || [ -z "$PORTAINER_STACK_ID" ]; then
+            echo "::warning::secrets do Portainer não configurados, deploy manual (ver README)"
+            exit 0
+          fi
+
+          tag="sha-${GITHUB_SHA::7}"
+          api="${PORTAINER_URL%/}/api"
+
+          stack=$(curl -fsS -H "X-API-Key: $PORTAINER_TOKEN" "$api/stacks/$PORTAINER_STACK_ID")
+          endpoint=$(jq -r '.EndpointId' <<< "$stack")
+
+          jq --arg tag "$tag" '{
+              env: ([.Env[] | select(.name != "IMAGE_TAG")] + [{name: "IMAGE_TAG", value: $tag}]),
+              prune: false,
+              pullImage: true,
+              repositoryReferenceName: .GitConfig.ReferenceName,
+              repositoryAuthentication: false
+            }' <<< "$stack" > corpo.json
+
+          curl -fsS -o /dev/null -X PUT \
+            -H "X-API-Key: $PORTAINER_TOKEN" -H "Content-Type: application/json" \
+            --data @corpo.json \
+            "$api/stacks/$PORTAINER_STACK_ID/git/redeploy?endpointId=$endpoint"
+          rm corpo.json
+
+          echo "stack atualizada pra $tag"

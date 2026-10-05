@@ -2,6 +2,10 @@
 # As variáveis abaixo vêm do campo "Environment variables" do Portainer no momento
 # do deploy -- nenhum valor real fica gravado neste arquivo nem no repositório.
 #
+# As imagens não são buildadas no servidor: o GitHub Actions builda, testa e
+# publica no GHCR, e o IMAGE_TAG (sha-<commit>) é trocado pelo próprio workflow
+# a cada deploy. Sem IMAGE_TAG definido, cai no latest.
+#
 # Todos os serviços ficam na rede padrão do projeto (criada automaticamente pelo
 # Compose, sem precisar declarar nada) -- de propósito, pra reaproveitar a rede
 # que já existe desde o primeiro deploy em vez de pedir uma sub-rede nova ao
@@ -9,7 +13,7 @@
 # livres é limitado).
 services:
   app:
-    build: .
+    image: ghcr.io/joao-alegre07/hanks-catalogue-app:${IMAGE_TAG:-latest}
     ports:
       - "8212:5000"
     environment:
@@ -37,7 +41,7 @@ services:
   # Sem "ports:" de propósito -- só acessível pela rede do projeto, nunca
   # publicado pro host. O catálogo é o único ponto de entrada público.
   auth:
-    build: ./auth-service
+    image: ghcr.io/joao-alegre07/hanks-catalogue-auth:${IMAGE_TAG:-latest}
     environment:
       DB_HOST: ${DB_HOST}
       DB_PORT: ${DB_PORT}
@@ -58,7 +62,7 @@ services:
   # num Redis Stream. Também sem porta publicada -- a consulta dos logs
   # passa pelo catálogo, na rota /admin/logs, que só admin acessa.
   log:
-    build: ./log-service
+    image: ghcr.io/joao-alegre07/hanks-catalogue-log:${IMAGE_TAG:-latest}
     environment:
       REDIS_URL: redis://redis:6379/0
     depends_on:
@@ -80,7 +84,7 @@ services:
   # O --default-bucket cria o bucket e a chave de acesso no primeiro boot a
   # partir das variáveis GARAGE_DEFAULT_*.
   garage:
-    build: ./garage
+    image: ghcr.io/joao-alegre07/hanks-catalogue-garage:${IMAGE_TAG:-latest}
     environment:
       GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET}
       GARAGE_DEFAULT_BUCKET: ${S3_BUCKET}

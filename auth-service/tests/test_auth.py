@@ -1,0 +1,97 @@
+import pytest
+from werkzeug.security import generate_password_hash
+
+import app as auth
+
+
+class ConexaoFalsa:
+    """Imita o pymysql só no que o auth-service usa: cursor(), execute(),
+    fetchone() e close(). Cada SELECT devolve o próximo item da fila."""
+
+    def __init__(self, resultados):
+        self.resultados = list(resultados)
+        self.consultas = []
+
+    def cursor(self):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def execute(self, sql, params=None):
+        self.consultas.append((sql, params))
+
+    def fetchone(self):
+        return self.resultados.pop(0) if self.resultados else None
+
+    @property
+    def lastrowid(self):
+        return 42
+
+    def close(self):
+        pass
+
+
+@pytest.fixture
+def client(monkeypatch):
+    monkeypatch.delenv("LOG_SERVICE_URL", raising=False)
+    auth.app.config["TESTING"] = True
+    return auth.app.test_client()
+
+
+def usar_banco(monkeypatch, *resultados):
+    conexao = ConexaoFalsa(resultados)
+    monkeypatch.setattr(auth, "get_connection", lambda: conexao)
+    return conexao
+
+
+def test_cadastro_sem_campos_da_400(client):
+    resp = client.post("/cadastro", json={"nome": "", "email": "a@a.com", "senha": ""})
+    assert resp.status_code == 400
+
+
+def test_cadastro_novo_sempre_entra_como_usuario(client, monkeypatch):
+    banco = usar_banco(monkeypatch, None)
+
+    resp = client.post("/cadastro", json={"nome": "Maria", "email": "Maria@Exemplo.com", "senha": "x"})
+
+    assert resp.status_code == 201
+    insert, params = banco.consultas[-1]
+    assert "'usuario'" in insert
+    assert params[1] == "maria@exemplo.com"
+    assert params[2] != "x"
+
+
+def test_cadastro_com_email_repetido_da_409(client, monkeypatch):
+    usar_banco(monkeypatch, {"id": 1})
+    resp = client.post("/cadastro", json={"nome": "Maria", "email": "maria@exemplo.com", "senha": "x"})
+    assert resp.status_code == 409
+
+
+def test_login_com_senha_errada_da_401(client, monkeypatch):
+    usar_banco(
+        monkeypatch,
+        {"id": 7, "nome": "Maria", "senha_hash": generate_password_hash("certa"), "role": "usuario"},
+    )
+    resp = client.post("/login", json={"email": "maria@exemplo.com", "senha": "errada"})
+    assert resp.status_code == 401
+
+
+def test_login_certo_devolve_o_papel(client, monkeypatch):
+    usar_banco(
+        monkeypatch,
+        {"id": 7, "nome": "Maria", "senha_hash": generate_password_hash("certa"), "role": "admin"},
+    )
+    resp = client.post("/login", json={"email": "maria@exemplo.com", "senha": "certa"})
+    assert resp.status_code == 200
+    assert resp.get_json() == {"usuario_id": 7, "nome": "Maria", "role": "admin"}
+
+
+def test_resetar_senha_com_token_usado_da_400(client, monkeypatch):
+    usar_banco(monkeypatch, {"usuario_id": 7, "expira_em": None, "usado": True})
+    resp = client.post("/resetar-senha", json={"token": "abc", "nova_senha": "nova"})
+    assert resp.status_code == 400
+    assert "usado" in resp.get_json()["erro"]

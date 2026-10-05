@@ -1,0 +1,15 @@
+.git
+.github
+.env
+__pycache__
+*.pyc
+.venv
+venv
+tests
+auth-service
+log-service
+garage
+docker-compose*.yml
+*.md
+.claude
+.pytest_cache
