@@ -277,9 +277,9 @@ falha, os seguintes nem começam:
 ```
 push na main ──> testes ──> imagens (4 em paralelo) ──> deploy
                    │              │                       │
-                 pytest     build + push no GHCR     API do Portainer:
-                            sha-<commit> e latest    IMAGE_TAG=sha-<commit>
-                                                     + pull e redeploy
+                 pytest     build + push no GHCR     IMAGE_TAG=sha-<commit>
+                            sha-<commit> e latest    + pull e redeploy
+                                                     no Portainer (ver pendência)
 ```
 
 1. **testes** — roda o pytest dos três serviços. Os testes não dependem de nada externo: o catálogo
@@ -294,6 +294,26 @@ push na main ──> testes ──> imagens (4 em paralelo) ──> deploy
    manda fazer *pull and redeploy*. Como o compose usa
    `ghcr.io/joao-alegre07/hanks-catalogue-app:${IMAGE_TAG:-latest}`, o container sobe com a imagem
    exata daquele commit — dá pra saber o que está em produção só olhando a tag no `docker ps`.
+
+### Pendência: o deploy ainda é com um clique
+
+O Portainer da disciplina (`portainer.lapps.studio`) fica atrás do Cloudflare, e o Cloudflare
+responde `403` pras chamadas que saem dos runners do GitHub. A mesma chamada, com o mesmo token,
+feita de um computador comum, responde `200` — então não é token nem permissão, é o caminho até o
+servidor que está fechado pro GitHub.
+
+Por isso o job de deploy tenta a API e, se receber outra coisa que não `200` ao ler a stack, não
+derruba a execução: deixa um aviso e escreve no resumo da execução (aba Actions) a tag que acabou de
+ser publicada. A atualização vira um clique no Portainer:
+
+1. stack `hanks-catalogue` → **Environment variables** → `IMAGE_TAG` = `sha-<commit>` (a tag que
+   aparece no resumo da execução);
+2. **Pull and redeploy**.
+
+O resto já é automático: testes, build, publicação das imagens com a tag do commit e o compose
+apontando pra essa tag. Se o acesso dos runners ao Portainer for liberado (uma regra no Cloudflare
+pra rota `/api` com token, por exemplo), o mesmo job passa a fazer o redeploy sozinho, sem mudar
+nada no workflow.
 
 | Imagem | |
 |---|---|
@@ -313,15 +333,14 @@ deixa o `.env` local de fora do build). Cada segredo fica num lugar só:
 |---|---|
 | GitHub → Settings → Secrets and variables → Actions | `PORTAINER_URL`, `PORTAINER_TOKEN` (access token criado no Portainer, em *My account*), `PORTAINER_STACK_ID` |
 | Automático do GitHub Actions | `GITHUB_TOKEN`, usado só pra publicar no GHCR (permissão `packages: write` só no job de imagens) |
-| Portainer → stack → Environment variables | senhas do banco, chave da TMDB, SMTP, chaves do Garage e o `IMAGE_TAG` (que o próprio workflow atualiza) |
+| Portainer → stack → Environment variables | senhas do banco, chave da TMDB, SMTP, chaves do Garage e o `IMAGE_TAG` (a tag do commit em produção) |
 
 O job de deploy lê as variáveis atuais da stack, troca só o `IMAGE_TAG` e devolve o resto pro
 Portainer do jeito que estava, sem imprimir nada no log. Os pacotes no GHCR são públicos (o
 repositório também é), então o servidor puxa as imagens sem precisar de login no registry.
 
-Se os três secrets do Portainer não estiverem configurados, o job de deploy só avisa e termina sem
-erro: as imagens continuam sendo publicadas, e a atualização vira um clique no Portainer (editar o
-`IMAGE_TAG` da stack pra tag do commit e *Pull and redeploy*).
+Se os três secrets do Portainer não estiverem configurados, o job de deploy cai no mesmo caminho da
+pendência acima: avisa e deixa a tag no resumo da execução.
 
 ### Rodando os testes localmente
 
