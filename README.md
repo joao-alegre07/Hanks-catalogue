@@ -52,6 +52,7 @@ logs, que é o único que escreve no Redis.
 - **Deploy**: Docker, servido via Gunicorn
 - **CI/CD**: GitHub Actions, imagens no GHCR, deploy pela API do Portainer
 - **Testes**: pytest (com `fakeredis` no log-service)
+- **Observabilidade**: `/health` em cada serviço, HEALTHCHECK do Docker, `/metrics` com [prometheus-flask-exporter](https://github.com/rycus86/prometheus_flask_exporter), Prometheus + Grafana (local)
 
 ## Rodando localmente
 
@@ -79,6 +80,7 @@ app/                      # catálogo
   perfil.py               # página de perfil, upload da foto, rota /fotos
   storage.py              # envio e URLs assinadas do object storage (S3)
   auditoria.py            # envia eventos pro serviço de logs
+  saude.py                # /health e /health/live
   db.py                   # conexão com o MariaDB
   tmdb.py                 # integração com a API do TMDB
   openapi.yml             # spec OpenAPI das rotas do catálogo
@@ -90,6 +92,7 @@ auth-service/             # serviço de autenticação (sem porta pública)
 log-service/              # serviço de logs (sem porta pública)
   app.py                  # grava (XADD) e lista (XREVRANGE) eventos no Redis
 garage/                   # imagem do Garage com o garage.toml (sem segredos)
+observabilidade/          # prometheus.yml e o painel do Grafana (provisionado sozinho)
 tests/                    # testes do catálogo (auth-service/tests e log-service/tests pros outros dois)
 .github/workflows/ci-cd.yml  # pipeline: testes -> imagens no GHCR -> deploy no Portainer
 templates/                # páginas (login, cadastro, catálogo, perfil, esqueci/resetar senha, logs)
@@ -323,6 +326,7 @@ nada no workflow.
 | `ghcr.io/joao-alegre07/hanks-catalogue-garage` | Garage com o `garage.toml` |
 
 Execuções do pipeline: [aba Actions](https://github.com/joao-alegre07/Hanks-catalogue/actions/workflows/ci-cd.yml).
+Execução verde usada na entrega: [run 37378493266](https://github.com/joao-alegre07/Hanks-catalogue/actions/runs/37378493266).
 
 ### Segredos
 
@@ -350,6 +354,123 @@ python -m pytest tests
 cd auth-service && python -m pytest && cd ..
 cd log-service && python -m pytest && cd ..
 ```
+
+## Observabilidade
+
+Logs de auditoria já existiam (o log-service). Aqui entram os outros dois sinais pra saber se o sistema
+está de pé e como está se comportando sem precisar entrar no servidor: **health checks** e
+**métricas**.
+
+### `/health` em cada serviço
+
+Cada serviço tem duas rotas:
+
+- **`/health/live`** (*liveness*): só diz que o processo está vivo e respondendo. Sempre `200` se o
+  Flask responder.
+- **`/health`** (*readiness*): testa de verdade cada dependência que o serviço usa direto, com timeout
+  de 2 segundos, e responde `503` se alguma falhar.
+
+| Serviço | O que o `/health` testa |
+|---|---|
+| Catálogo | `SELECT 1` no MariaDB e `HeadBucket` no bucket do Garage |
+| auth-service | `SELECT 1` no MariaDB |
+| log-service | `PING` no Redis |
+
+Com o Redis derrubado, `GET /health` no log-service responde `503`:
+
+```json
+{"dependencias": {"redis": "falhou: ConnectionError"}, "status": "falhou"}
+```
+
+O catálogo não testa o auth nem o log no `/health` dele — cada um já tem o próprio. Se o catálogo
+também conferisse o log, o Redis caindo deixaria **dois** containers unhealthy em vez de um, e o
+problema pareceria estar no lugar errado. Além disso o catálogo continua funcionando sem o
+log-service (o evento de auditoria só se perde), então não faria sentido ele se declarar fora do ar
+por causa disso.
+
+### HEALTHCHECK no Docker
+
+O `Dockerfile` do catálogo, do auth e do log tem um `HEALTHCHECK` que chama o `/health` a cada 15
+segundos (com o `python` que já está na imagem, sem instalar `curl`). Três falhas seguidas e o
+container fica `unhealthy`. O Redis e o Garage, que usam imagens prontas, têm o healthcheck no
+compose (`redis-cli ping` e `garage status`). O compose também usa isso na subida: o log-service só
+sobe depois do Redis estar `healthy`, e o catálogo só depois do Garage.
+
+Derrubando o Redis (`docker stop <redis>`), o `/health` do log-service passa a responder `503` na
+hora e em menos de um minuto o `docker ps` mostra o container `unhealthy` — enquanto o catálogo e o
+auth continuam `healthy`. Voltando o Redis, o log-service volta pra `healthy` sozinho no próximo
+check.
+
+Tudo no ar:
+
+![docker ps com todos os serviços healthy](docs/prints/observabilidade/01-docker-ps-healthy.png)
+
+Com o Redis parado, o log-service fica `unhealthy` sem ninguém mexer nele, e o `/health` dele
+responde `503` dizendo qual dependência falhou:
+
+![docker ps com o redis parado e o log-service unhealthy](docs/prints/observabilidade/02-redis-parado-log-unhealthy.png)
+
+O Docker sozinho (sem Swarm/Kubernetes) só **marca** o container como unhealthy, não reinicia nem
+tira ele do tráfego. Num orquestrador, o `/health/live` seria o *liveness probe* (falhou → reinicia) e
+o `/health` o *readiness probe* (falhou → para de mandar requisição, mas não reinicia: reiniciar o
+log-service não traria o Redis de volta).
+
+### `/metrics`
+
+Os três serviços expõem `/metrics` no formato do Prometheus, via `prometheus-flask-exporter`. A
+métrica principal é `flask_http_request_duration_seconds`, um histograma com as labels `method`,
+`url_rule` (a rota) e `status` — o `_count` dele é a contagem de requisições por rota e status, e os
+`_bucket` dão a latência.
+
+```
+flask_http_request_duration_seconds_count{method="GET",status="200",url_rule="/login"} 42.0
+flask_http_request_duration_seconds_count{method="POST",status="403",url_rule="/perfil/<int:usuario_id>/editar"} 3.0
+```
+
+A label é a **regra** da rota (`/perfil/<int:usuario_id>`), não o caminho real (`/perfil/7`) — senão
+cada id de usuário viraria uma série nova no Prometheus. O próprio `/health` fica fora da contagem,
+pra o healthcheck do Docker (4 chamadas por minuto em cada serviço) não poluir os números.
+
+O do catálogo é público: [joao-alegre-isw055.lapps.studio/metrics](https://joao-alegre-isw055.lapps.studio/metrics).
+
+![saída do /metrics do catálogo](docs/prints/observabilidade/04-metrics.png)
+
+### Prometheus + Grafana
+
+O `docker-compose.dev.yml` sobe também um Prometheus (coleta o `/metrics` dos três serviços a cada
+15 s, config em [`observabilidade/prometheus.yml`](observabilidade/prometheus.yml)) e um Grafana com
+o datasource e o painel **Tom Hanks Catalog** já provisionados — não precisa configurar nada na mão:
+
+```bash
+docker compose -f docker-compose.dev.yml up --build
+```
+
+- Grafana: `http://localhost:3000` (abre direto no painel, sem login)
+- Prometheus: `http://localhost:9090`
+
+| Painel | Consulta |
+|---|---|
+| Serviços no ar | `up` |
+| Requisições por minuto | `sum by (job) (rate(flask_http_request_duration_seconds_count[1m])) * 60` |
+| Taxa de erro (4xx + 5xx) | requisições com `status=~"4..\|5.."` ÷ total, por serviço |
+| Latência p95 | `histogram_quantile(0.95, sum by (job, le) (rate(flask_http_request_duration_seconds_bucket[5m])))` |
+| Requisições por rota e status | `sum by (job, url_rule, status) (rate(..._count[1m])) * 60` |
+
+Prometheus e Grafana ficam só no compose de dev: no servidor da disciplina a stack tem uma porta
+pública só (a do catálogo), e o Grafana precisaria de outra.
+
+O painel abaixo é de um teste local, com um script chamando as rotas em loop (incluindo rotas
+inexistentes e login com senha errada, por isso a taxa de erro alta). Entre 19:57 e 20:00 é o
+mesmo Redis parado do print acima: o `/eventos` do log-service passa a responder `500`, a taxa de
+erro dele vai pra 100%, a latência sobe, e tudo volta ao normal sozinho quando o Redis sobe de novo.
+
+![painel do grafana](docs/prints/observabilidade/03-grafana.png)
+
+### Traces
+
+O terceiro pilar seria o *tracing*: seguir uma requisição só (um login, por exemplo) passando pelo
+catálogo → auth-service → log-service, com o tempo gasto em cada um. Ficou de fora; seria o próximo
+passo, com OpenTelemetry.
 
 ---
 

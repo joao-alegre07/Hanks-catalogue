@@ -24,6 +24,8 @@ tags:
     description: Página de perfil e foto
   - name: admin
     description: Só pra quem tem papel admin
+  - name: saúde
+    description: Health checks e métricas, sem login
 
 components:
   securitySchemes:
@@ -479,3 +481,49 @@ paths:
           $ref: "#/components/responses/NaoEncontrado"
         "503":
           description: Object storage fora do ar.
+
+  /health:
+    get:
+      tags: [saúde]
+      summary: "Readiness: o catálogo consegue falar com o MariaDB e com o Garage"
+      description: >
+        É pra cá que aponta o HEALTHCHECK do Docker. Faz um `SELECT 1` no MariaDB e um `HeadBucket`
+        no Garage, cada um com timeout de 2 segundos. O auth e o log não entram aqui: cada um tem o
+        próprio `/health`.
+      responses:
+        "200":
+          description: Tudo certo.
+          content:
+            application/json:
+              example: {"status": "ok", "dependencias": {"mariadb": "ok", "garage": "ok"}}
+        "503":
+          description: Alguma dependência fora do ar.
+          content:
+            application/json:
+              example: {"status": "falhou", "dependencias": {"mariadb": "ok", "garage": "falhou: EndpointConnectionError"}}
+
+  /health/live:
+    get:
+      tags: [saúde]
+      summary: "Liveness: o processo está de pé e respondendo"
+      responses:
+        "200":
+          description: Vivo.
+          content:
+            application/json:
+              example: {"status": "ok"}
+
+  /metrics:
+    get:
+      tags: [saúde]
+      summary: Métricas no formato do Prometheus
+      description: >
+        Contagem de requisições e latência por rota (`url_rule`), método e status, em
+        `flask_http_request_duration_seconds` (histograma). O `/health` não entra na contagem.
+      responses:
+        "200":
+          description: Texto no formato de exposição do Prometheus.
+          content:
+            text/plain:
+              schema:
+                type: string

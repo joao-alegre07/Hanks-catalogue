@@ -17,10 +17,14 @@ services:
       PUBLIC_APP_URL: http://localhost:5000
       S3_ENDPOINT: http://garage:3900
     depends_on:
-      - db
-      - auth
-      - log
-      - garage
+      db:
+        condition: service_healthy
+      auth:
+        condition: service_started
+      log:
+        condition: service_started
+      garage:
+        condition: service_healthy
 
   # Em produção auth e log não têm porta publicada. Aqui ficam expostas só pra
   # abrir o Swagger deles (/apidocs) direto do navegador.
@@ -35,8 +39,10 @@ services:
       PORT: 5001
       LOG_SERVICE_URL: http://log:5002
     depends_on:
-      - db
-      - log
+      db:
+        condition: service_healthy
+      log:
+        condition: service_started
 
   log:
     build: ./log-service
@@ -45,13 +51,19 @@ services:
     environment:
       REDIS_URL: redis://redis:6379/0
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
 
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
 
   garage:
     build: ./garage
@@ -62,6 +74,12 @@ services:
       GARAGE_DEFAULT_SECRET_KEY: ${S3_SECRET_KEY}
     volumes:
       - garage_data:/var/lib/garage
+    healthcheck:
+      test: ["CMD", "/garage", "status"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   db:
     image: mariadb:11
@@ -75,8 +93,46 @@ services:
     volumes:
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
       - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Prometheus coleta o /metrics dos três serviços a cada 15s e o Grafana
+  # mostra o painel "Tom Hanks Catalog" (já provisionado, sem configurar nada
+  # na mão): http://localhost:3000
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observabilidade/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - app
+      - auth
+      - log
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    ports:
+      - "3000:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/hanks-catalogue.json
+    volumes:
+      - ./observabilidade/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observabilidade/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
 
 volumes:
   db_data:
   redis_data:
   garage_data:
+  prometheus_data:
+  grafana_data:

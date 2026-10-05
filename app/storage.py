@@ -14,15 +14,25 @@ def _bucket():
     return os.environ["S3_BUCKET"]
 
 
-def _cliente():
+def _cliente(config_extra=None):
+    config = Config(signature_version="s3v4", s3={"addressing_style": "path"})
+    if config_extra is not None:
+        config = config.merge(config_extra)
     return boto3.client(
         "s3",
         endpoint_url=_endpoint(),
         aws_access_key_id=os.environ["S3_ACCESS_KEY"],
         aws_secret_access_key=os.environ["S3_SECRET_KEY"],
         region_name=os.environ.get("S3_REGION", "garage"),
-        config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
+        config=config,
     )
+
+
+def conferir_bucket():
+    # Usado pelo /health: só pergunta se o bucket existe, com timeout curto e
+    # sem as tentativas extras que o boto3 faz por padrão.
+    cliente = _cliente(Config(connect_timeout=2, read_timeout=2, retries={"max_attempts": 1}))
+    cliente.head_bucket(Bucket=_bucket())
 
 
 def enviar(chave, dados, content_type):

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import redis
 from flasgger import Swagger
 from flask import Flask, jsonify, request
+from prometheus_flask_exporter import PrometheusMetrics
 
 app = Flask(__name__)
 app.config["SWAGGER"] = {"title": "log-service", "openapi": "3.0.3"}
@@ -42,7 +43,57 @@ Swagger(
 
 STREAM = "auditoria"
 
-r = redis.Redis.from_url(os.environ.get("REDIS_URL", "redis://redis:6379/0"), decode_responses=True)
+PrometheusMetrics(app, group_by="url_rule", excluded_paths=["^/health"])
+
+r = redis.Redis.from_url(
+    os.environ.get("REDIS_URL", "redis://redis:6379/0"),
+    decode_responses=True,
+    socket_connect_timeout=2,
+    socket_timeout=2,
+)
+
+
+@app.route("/health/live")
+def live():
+    """Liveness: o processo está de pé e respondendo
+    ---
+    tags: [saúde]
+    description: Não testa nada além do próprio serviço; sempre 200 se o Flask responder.
+    responses:
+      200:
+        description: Vivo.
+        content:
+          application/json:
+            example: {"status": "ok"}
+    """
+    return jsonify(status="ok")
+
+
+@app.route("/health")
+def ready():
+    """Readiness: o serviço consegue falar com o Redis
+    ---
+    tags: [saúde]
+    description: >
+      É pra cá que aponta o HEALTHCHECK do Docker. Manda um `PING` pro Redis, com timeout de 2 segundos.
+    responses:
+      200:
+        description: Tudo certo.
+        content:
+          application/json:
+            example: {"status": "ok", "dependencias": {"redis": "ok"}}
+      503:
+        description: Redis fora do ar.
+        content:
+          application/json:
+            example: {"status": "falhou", "dependencias": {"redis": "falhou: ConnectionError"}}
+    """
+    try:
+        r.ping()
+    except redis.exceptions.RedisError as e:
+        return jsonify(status="falhou", dependencias={"redis": f"falhou: {type(e).__name__}"}), 503
+
+    return jsonify(status="ok", dependencias={"redis": "ok"})
 
 
 @app.route("/eventos", methods=["POST"])

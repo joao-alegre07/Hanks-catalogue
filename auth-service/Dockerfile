@@ -10,4 +10,9 @@ COPY . .
 ENV PORT=5001
 EXPOSE 5001
 
+# urlopen levanta exceção em qualquer status que não seja 2xx, então um 503
+# do /health já faz o python sair com erro e o container ficar unhealthy.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${PORT}/health', timeout=4)"
+
 CMD ["sh", "-c", "gunicorn app:app --bind 0.0.0.0:${PORT}"]

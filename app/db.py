@@ -4,7 +4,7 @@ import pymysql
 import pymysql.cursors
 
 
-def get_connection():
+def get_connection(connect_timeout=10):
     return pymysql.connect(
         host=os.environ["DB_HOST"],
         port=int(os.environ.get("DB_PORT", 3306)),
@@ -13,4 +13,5 @@ def get_connection():
         database=os.environ["DB_NAME"],
         cursorclass=pymysql.cursors.DictCursor,
         autocommit=True,
+        connect_timeout=connect_timeout,
     )

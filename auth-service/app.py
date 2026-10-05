@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 from flasgger import Swagger
 from flask import Flask, jsonify, request
+from prometheus_flask_exporter import PrometheusMetrics
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from auditoria import registrar
@@ -37,7 +38,57 @@ Swagger(
     },
 )
 
+PrometheusMetrics(app, group_by="url_rule", excluded_paths=["^/health"])
+
 TOKEN_VALIDADE_MINUTOS = 30
+
+
+@app.route("/health/live")
+def live():
+    """Liveness: o processo está de pé e respondendo
+    ---
+    tags: [saúde]
+    description: Não testa nada além do próprio serviço; sempre 200 se o Flask responder.
+    responses:
+      200:
+        description: Vivo.
+        content:
+          application/json:
+            example: {"status": "ok"}
+    """
+    return jsonify(status="ok")
+
+
+@app.route("/health")
+def ready():
+    """Readiness: o serviço consegue falar com o MariaDB
+    ---
+    tags: [saúde]
+    description: >
+      É pra cá que aponta o HEALTHCHECK do Docker. Faz um `SELECT 1` no MariaDB com timeout de 2 segundos.
+    responses:
+      200:
+        description: Tudo certo.
+        content:
+          application/json:
+            example: {"status": "ok", "dependencias": {"mariadb": "ok"}}
+      503:
+        description: MariaDB fora do ar.
+        content:
+          application/json:
+            example: {"status": "falhou", "dependencias": {"mariadb": "falhou: OperationalError"}}
+    """
+    try:
+        conn = get_connection(connect_timeout=2)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+        finally:
+            conn.close()
+    except Exception as e:
+        return jsonify(status="falhou", dependencias={"mariadb": f"falhou: {type(e).__name__}"}), 503
+
+    return jsonify(status="ok", dependencias={"mariadb": "ok"})
 
 
 @app.route("/cadastro", methods=["POST"])
