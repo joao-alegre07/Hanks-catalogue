@@ -472,6 +472,11 @@ O terceiro pilar seria o *tracing*: seguir uma requisição só (um login, por e
 catálogo → auth-service → log-service, com o tempo gasto em cada um. Ficou de fora; seria o próximo
 passo, com OpenTelemetry.
 
+## Relatório da P1
+
+O relatório bimestral, com o quadro de entregas e a evidência de cada atividade, está em
+[`docs/P1_ISW055_Joao_Alegre.pdf`](docs/P1_ISW055_Joao_Alegre.pdf).
+
 ---
 
 Projeto para a aula do professor [@siriani](https://github.com/siriani).
