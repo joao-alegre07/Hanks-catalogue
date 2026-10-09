@@ -22,6 +22,8 @@ tags:
     description: Filmes, favoritos e comentários
   - name: perfil
     description: Página de perfil e foto
+  - name: premium
+    description: Assinatura do plano premium (Stripe, em modo de teste)
   - name: admin
     description: Só pra quem tem papel admin
   - name: saúde
@@ -255,7 +257,10 @@ paths:
     post:
       tags: [catálogo]
       summary: Favorita ou desfavorita um filme
-      description: Se o filme já está nos favoritos, sai; se não está, entra.
+      description: >
+        Se o filme já está nos favoritos, sai; se não está, entra. No plano gratuito cada usuário
+        tem até 5 favoritos; pra favoritar o sexto, o catálogo pergunta o plano atual pro
+        auth-service e só premium passa. Desfavoritar é sempre liberado.
       security:
         - sessao: []
       requestBody:
@@ -284,6 +289,8 @@ paths:
           description: Feito. Volta pro catálogo na mesma página (ou pra `/login`, sem sessão).
         "400":
           $ref: "#/components/responses/CampoFaltando"
+        "403":
+          description: Limite de favoritos do plano gratuito. Fica no log como `acesso_negado`.
 
   /comentar:
     post:
@@ -347,6 +354,101 @@ paths:
           $ref: "#/components/responses/Proibido"
         "404":
           $ref: "#/components/responses/NaoEncontrado"
+
+  /premium:
+    get:
+      tags: [premium]
+      summary: Página do plano premium
+      description: Mostra o plano atual (perguntado na hora pro auth-service) e o botão de assinar.
+      security:
+        - sessao: []
+      parameters:
+        - name: sucesso
+          in: query
+          description: Volta do checkout pago. Só mostra um aviso; quem ativa o plano é o webhook.
+          schema:
+            type: integer
+            example: 1
+        - name: cancelado
+          in: query
+          description: Volta do checkout sem pagar.
+          schema:
+            type: integer
+            example: 1
+      responses:
+        "200":
+          $ref: "#/components/responses/Html"
+        "302":
+          $ref: "#/components/responses/RedirLogin"
+
+  /premium/assinar:
+    post:
+      tags: [premium]
+      summary: Abre o checkout do Stripe
+      description: >
+        Cria uma Checkout Session (modo assinatura, preço `STRIPE_PRICE_ID`) com o id do usuário em
+        `client_reference_id` e redireciona pra página de pagamento do Stripe. O cartão é digitado
+        lá, nunca no catálogo. Quem já é premium volta pra `/premium`.
+      security:
+        - sessao: []
+      responses:
+        "303":
+          description: Redireciona pro checkout do Stripe.
+          headers:
+            Location:
+              schema:
+                type: string
+                example: https://checkout.stripe.com/c/pay/cs_test_a1b2c3...
+        "302":
+          $ref: "#/components/responses/RedirLogin"
+        "503":
+          description: Stripe ou auth-service não responderam.
+
+  /stripe/webhook:
+    post:
+      tags: [premium]
+      summary: Webhook do Stripe
+      description: >
+        Chamado pelo Stripe, não pelo navegador. Confere o cabeçalho `Stripe-Signature` com o
+        segredo do endpoint (`STRIPE_WEBHOOK_SECRET`) antes de ler qualquer coisa do corpo.
+        `checkout.session.completed` pago liga o premium do usuário; `customer.subscription.deleted`
+        desliga. Outros eventos recebem `200` e são ignorados.
+      parameters:
+        - name: Stripe-Signature
+          in: header
+          required: true
+          schema:
+            type: string
+            example: t=1791580000,v1=5257a869e7ecebeda32affa62cdca3fa51cad7e77a0e56ff536d0ce8e108d8bd
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+            example:
+              id: evt_1Q8xYz2eZvKYlo2C
+              type: checkout.session.completed
+              data:
+                object:
+                  id: cs_test_a1b2c3
+                  client_reference_id: "7"
+                  payment_status: paid
+                  customer: cus_R2x9aB3cD4eF5g
+                  subscription: sub_1Q8xYz2eZvKYlo2C
+      responses:
+        "200":
+          description: Evento recebido.
+          content:
+            application/json:
+              example: {"recebido": true}
+        "400":
+          description: Sem assinatura ou assinatura que não bate. Fica no log como `webhook_recusado`.
+          content:
+            application/json:
+              example: {"erro": "Assinatura inválida."}
+        "503":
+          description: O auth-service não gravou o plano. O Stripe tenta de novo mais tarde.
 
   /admin/logs:
     get:

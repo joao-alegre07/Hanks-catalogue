@@ -191,7 +191,9 @@ body {
 }
 .acao-acesso_negado .acao,
 .acao-login_falhou .acao { background: #5c1a1a; color: #ff6b6b; }
-.acao-moderar_comentario .acao { background: #4a3b12; color: #f0c040; }
+.acao-moderar_comentario .acao,
+.acao-premium_ativado .acao { background: #4a3b12; color: #f0c040; }
+.acao-webhook_recusado .acao { background: #5c1a1a; color: #ff6b6b; }
 
 .autor { color: #eee; font-weight: 600; text-decoration: none; }
 .autor:hover { text-decoration: underline; }
@@ -266,6 +268,74 @@ body {
 }
 .favorito img { width: 100%; border-radius: 6px; display: block; }
 .favorito p { font-size: 0.8rem; margin: 0.35rem 0 0; }
+
+.selo-premium {
+  display: inline-block;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  background: #f0c040;
+  color: #12121a;
+  font-size: 0.8rem;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
+.topbar-links .link-premium { color: #f0c040; }
+
+.plano-aviso {
+  margin: 0 2rem 1.5rem;
+  padding: 0.6rem 1rem;
+  background: #1e1e2b;
+  border-left: 3px solid #f0c040;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  color: #ccc;
+}
+.plano-aviso a { color: #f0c040; }
+
+.fav-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.premium {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 0 2rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.plano {
+  background: #1e1e2b;
+  padding: 1.5rem;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.plano h2, .plano p { margin: 0; }
+.plano ul { margin: 0; padding-left: 1.2rem; line-height: 1.7; }
+.plano button {
+  padding: 0.6rem 1.25rem;
+  border: none;
+  border-radius: 4px;
+  background: #e50914;
+  color: white;
+  font-size: 1rem;
+  cursor: pointer;
+}
+.plano-ativo { border: 1px solid #f0c040; align-items: flex-start; }
+.preco { font-size: 2rem; font-weight: 700; }
+.preco span { font-size: 1rem; font-weight: 400; color: #999; }
+.plano-nota { color: #999; font-size: 0.8rem; }
+
+.aviso {
+  margin: 0;
+  padding: 0.6rem 1rem;
+  background: #1e1e2b;
+  border-left: 3px solid #f0c040;
+  border-radius: 4px;
+  color: #ccc;
+}
 
 @media (max-width: 600px) {
   .perfil { padding: 0 1rem 1rem; }

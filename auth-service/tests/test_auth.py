@@ -95,3 +95,37 @@ def test_resetar_senha_com_token_usado_da_400(client, monkeypatch):
     resp = client.post("/resetar-senha", json={"token": "abc", "nova_senha": "nova"})
     assert resp.status_code == 400
     assert "usado" in resp.get_json()["erro"]
+
+
+def test_usuario_vem_com_o_plano(client, monkeypatch):
+    usar_banco(
+        monkeypatch,
+        {"id": 7, "nome": "Maria", "email": "maria@exemplo.com", "role": "usuario", "premium": 1},
+    )
+    resp = client.get("/usuarios/7")
+    assert resp.get_json()["premium"] is True
+
+
+def test_alterar_plano_sem_premium_da_400(client):
+    resp = client.put("/usuarios/7/plano", json={"stripe_customer_id": "cus_x"})
+    assert resp.status_code == 400
+
+
+def test_alterar_plano_de_usuario_que_nao_existe_da_404(client, monkeypatch):
+    usar_banco(monkeypatch, None)
+    resp = client.put("/usuarios/99/plano", json={"premium": True})
+    assert resp.status_code == 404
+
+
+def test_cancelar_premium_tira_a_assinatura_e_mantem_o_cliente(client, monkeypatch):
+    banco = usar_banco(monkeypatch, {"id": 7})
+
+    resp = client.put(
+        "/usuarios/7/plano",
+        json={"premium": False, "stripe_subscription_id": "sub_x"},
+    )
+
+    assert resp.status_code == 200
+    update, params = banco.consultas[-1]
+    assert "COALESCE" in update
+    assert params == (False, None, None, 7)

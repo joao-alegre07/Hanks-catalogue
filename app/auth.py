@@ -13,6 +13,19 @@ def _auth_url(caminho):
     return os.environ["AUTH_SERVICE_URL"].rstrip("/") + caminho
 
 
+def consultar_usuario(usuario_id):
+    """Papel e plano atuais do usuário, direto do auth-service (Padrão A: nada
+    disso é lido da sessão). None se o serviço não respondeu."""
+    try:
+        resp = requests.get(_auth_url(f"/usuarios/{usuario_id}"), timeout=5)
+    except requests.exceptions.RequestException:
+        return None
+
+    if resp.status_code != 200:
+        return None
+    return resp.json()
+
+
 def login_required(view):
     @wraps(view)
     def wrapped(*args, **kwargs):

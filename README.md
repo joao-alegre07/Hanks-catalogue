@@ -2,7 +2,7 @@
 
 [![ci-cd](https://github.com/joao-alegre07/Hanks-catalogue/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/joao-alegre07/Hanks-catalogue/actions/workflows/ci-cd.yml)
 
-Catálogo web para descobrir e acompanhar a filmografia de Tom Hanks. Busca os filmes ao vivo na API do TMDB e deixa cada usuário favoritar, comentar e montar um perfil com foto, bio e os filmes favoritos.
+Catálogo web para descobrir e acompanhar a filmografia de Tom Hanks. Busca os filmes ao vivo na API do TMDB e deixa cada usuário favoritar, comentar e montar um perfil com foto, bio e os filmes favoritos. Tem também um plano pago, o Premium, cobrado pelo Stripe (em modo de teste).
 
 A aplicação é dividida em três serviços independentes: o **catálogo** (público), um **microsserviço de autenticação** (login, papéis de usuário e recuperação de senha) e um **microsserviço de logs** (auditoria, guardada num Redis) e um **object storage** ([Garage](https://garagehq.deuxfleurs.fr/), compatível com S3) pras fotos de perfil. Só o catálogo tem porta pública; o resto só é acessível pela rede interna do Docker.
 
@@ -16,6 +16,7 @@ A aplicação é dividida em três serviços independentes: o **catálogo** (pú
 - **Recuperação de senha por e-mail**: link único, expira em 30 minutos e não pode ser reutilizado.
 - **Perfil** com foto, bio e filmes favoritados, no estilo de rede social. A foto vai pro object storage; o banco guarda só a chave do arquivo.
 - **Log de auditoria**: login, logout, favoritos, comentários, moderação e toda tentativa negada por permissão ficam registrados — só admin consulta.
+- **Plano Premium** (R$ 9,90/mês) cobrado pelo Stripe: o cartão é digitado na página do Stripe e a confirmação do pagamento chega por webhook. Premium favorita sem limite (no gratuito são 5) e ganha um selo no perfil.
 
 ## Arquitetura
 
@@ -33,6 +34,7 @@ Navegador ── HTTPS ──> Catálogo (único ponto público)
                      Redis (Stream "auditoria")
 
 Catálogo ──> Garage (bucket "fotos-perfil")   MariaDB guarda só a chave do objeto
+Catálogo <─> Stripe (checkout + webhook)      MariaDB guarda só os IDs do Stripe
 ```
 
 O catálogo é o único serviço com porta publicada. Login, cadastro, papéis e recuperação de senha
@@ -48,6 +50,7 @@ logs, que é o único que escreve no Redis.
 - **Object storage**: Garage (API S3), acessado com `boto3`
 - **Dados de filmes**: [TMDB API](https://www.themoviedb.org/documentation/api)
 - **E-mail**: Mailtrap (dev) / Brevo (produção)
+- **Pagamentos**: [Stripe](https://stripe.com) (Checkout + webhooks), em modo de teste, com a biblioteca `stripe`
 - **Documentação da API**: OpenAPI 3 + Swagger UI, via [flasgger](https://github.com/flasgger/flasgger)
 - **Deploy**: Docker, servido via Gunicorn
 - **CI/CD**: GitHub Actions, imagens no GHCR, deploy pela API do Portainer
@@ -56,7 +59,7 @@ logs, que é o único que escreve no Redis.
 
 ## Rodando localmente
 
-Pré-requisitos: Docker, uma [chave de API do TMDB](https://developer.themoviedb.org) e uma [conta Mailtrap](https://mailtrap.io) (ambas gratuitas).
+Pré-requisitos: Docker, uma [chave de API do TMDB](https://developer.themoviedb.org) , uma [conta Mailtrap](https://mailtrap.io) e uma [conta Stripe](https://dashboard.stripe.com/register) em modo de teste (todas gratuitas).
 
 ```bash
 git clone https://github.com/joao-alegre07/Hanks-catalogue.git
@@ -78,6 +81,7 @@ app/                      # catálogo
   auth.py                 # login/cadastro/esqueci-senha (chama o serviço auth)
   movies.py               # catálogo paginado, favoritar, comentar, /admin/logs
   perfil.py               # página de perfil, upload da foto, rota /fotos
+  premium.py              # plano premium: checkout do Stripe e webhook
   storage.py              # envio e URLs assinadas do object storage (S3)
   auditoria.py            # envia eventos pro serviço de logs
   saude.py                # /health e /health/live
@@ -95,9 +99,9 @@ garage/                   # imagem do Garage com o garage.toml (sem segredos)
 observabilidade/          # prometheus.yml e o painel do Grafana (provisionado sozinho)
 tests/                    # testes do catálogo (auth-service/tests e log-service/tests pros outros dois)
 .github/workflows/ci-cd.yml  # pipeline: testes -> imagens no GHCR -> deploy no Portainer
-templates/                # páginas (login, cadastro, catálogo, perfil, esqueci/resetar senha, logs)
+templates/                # páginas (login, cadastro, catálogo, perfil, premium, esqueci/resetar senha, logs)
 static/                   # CSS
-init.sql                  # schema do banco (usuarios, reset_tokens, favoritos, comentarios, perfis)
+init.sql                  # schema do banco (usuarios com o plano, reset_tokens, favoritos, comentarios, perfis)
 Dockerfile                # imagem do catálogo
 auth-service/Dockerfile   # imagem do serviço de autenticação
 log-service/Dockerfile    # imagem do serviço de logs
@@ -112,7 +116,8 @@ buildadas pelo GitHub Actions e publicadas no GHCR; o `docker-compose.yml` só p
 junto com a imagem oficial do Redis — nada é buildado no servidor (ver [CI/CD](#cicd)). Os serviços de autenticação e de logs, o Redis e o Garage **não têm porta publicada pro host** — só são alcançáveis internamente, pela rede padrão do
 projeto no Docker. Nenhuma credencial fica no
 repositório — tudo é injetado como variável de ambiente em tempo de deploy (ver `.env.example`
-pra lista completa: chave da TMDB, credenciais do MariaDB, credenciais SMTP e chaves do Garage).
+pra lista completa: chave da TMDB, credenciais do MariaDB, credenciais SMTP, chaves do Garage e
+do Stripe).
 
 ## Segurança
 
@@ -120,6 +125,8 @@ pra lista completa: chave da TMDB, credenciais do MariaDB, credenciais SMTP e ch
 - Senhas de usuário armazenadas com hash (`werkzeug.security`).
 - Links de redefinição de senha expiram em 30 minutos e não podem ser reutilizados (`reset_tokens.usado`).
 - `.env` no `.gitignore`; só `.env.example` (sem valores reais) é versionado.
+- Nenhum dado de cartão passa pelo sistema: o pagamento acontece na página do Stripe e o banco guarda só os IDs do cliente e da assinatura no Stripe.
+- O webhook do Stripe só é aceito com assinatura válida (ver [Plano Premium](#plano-premium-stripe)).
 
 ## Permissões por papel
 
@@ -165,6 +172,9 @@ escreve direto no Redis — assim o log fica centralizado num lugar só, separad
 | `moderar_comentario` | catálogo | admin apaga o comentário de outra pessoa |
 | `editar_perfil` | catálogo | usuário salva bio e/ou foto |
 | `acesso_negado` | catálogo | qualquer resposta `403` (rota e método ficam nos detalhes) |
+| `checkout_premium` | catálogo | usuário abre o checkout do Stripe |
+| `premium_ativado` / `premium_cancelado` | catálogo | webhook do Stripe confirmando pagamento / cancelamento |
+| `webhook_recusado` | catálogo | chamada no webhook sem assinatura válida do Stripe |
 
 Cada evento tem `usuario_id`, `acao` e `timestamp` (UTC, definido pelo `log-service` na hora em que
 recebe o evento, pra que todos os serviços fiquem na mesma linha do tempo), além do `ip` de origem,
@@ -289,7 +299,8 @@ push na main ──> testes ──> imagens (4 em paralelo) ──> deploy
    tem as chamadas HTTP pro auth e pro log trocadas por respostas falsas, o auth-service usa uma
    conexão de banco falsa e o log-service usa o `fakeredis` no lugar do Redis. Cobrem login certo e
    errado, cadastro (com e-mail repetido, campos vazios e papel sempre `usuario`), o `403` ao editar o
-   perfil de outra pessoa indo pro log, token de senha já usado e a ordem dos eventos de auditoria.
+   perfil de outra pessoa indo pro log, token de senha já usado, a ordem dos eventos de auditoria, o
+   webhook do Stripe recusando assinatura inválida e o limite de favoritos do plano gratuito.
 2. **imagens** — builda as quatro imagens e publica no GHCR com duas tags: `sha-<7 primeiros
    caracteres do commit>` e `latest`. Em pull request o build roda (pra pegar Dockerfile quebrado),
    mas nada é publicado.
@@ -471,6 +482,94 @@ erro dele vai pra 100%, a latência sobe, e tudo volta ao normal sozinho quando 
 O terceiro pilar seria o *tracing*: seguir uma requisição só (um login, por exemplo) passando pelo
 catálogo → auth-service → log-service, com o tempo gasto em cada um. Ficou de fora; seria o próximo
 passo, com OpenTelemetry.
+
+## Plano Premium (Stripe)
+
+O catálogo tem um plano pago, o **Premium (R$ 9,90/mês)**, cobrado pelo [Stripe](https://stripe.com)
+em **modo de teste**: cartões de teste, nenhuma cobrança real.
+
+| | Gratuito | Premium |
+|---|---|---|
+| Favoritos | até 5 | sem limite |
+| Selo ★ Premium no perfil | ❌ | ✅ |
+
+### Fluxo
+
+```
+1. "Assinar com Stripe"  ──>  POST /premium/assinar: o catálogo cria uma Checkout Session no Stripe
+2. Catálogo ── 303 ──> página de pagamento do Stripe (o cartão é digitado lá)
+3. Stripe ── redireciona ──> /premium?sucesso=1      só um aviso, não ativa nada
+4. Stripe ── webhook ──> POST /stripe/webhook         chega depois, quando o Stripe mandar
+5. Catálogo confere a assinatura ──> auth-service grava premium = 1 no MariaDB
+```
+
+O passo 3 não ativa o plano: qualquer um pode abrir `/premium?sucesso=1` na mão. Quem muda o plano é
+só o webhook, que é assíncrono — por isso, logo depois de pagar, a página pode mostrar "a confirmação
+chega em alguns segundos" até o evento chegar.
+
+A Checkout Session é criada em modo `subscription` com o preço do `STRIPE_PRICE_ID` e o id do
+usuário em `client_reference_id`, que volta no evento `checkout.session.completed`. O mesmo id vai
+nos `metadata` da assinatura, porque o evento de cancelamento (`customer.subscription.deleted`) não
+traz o `client_reference_id`.
+
+### Validação do webhook
+
+A rota `/stripe/webhook` é pública (o Stripe precisa alcançar), então qualquer um pode mandar um POST
+pra ela dizendo que pagou. Cada chamada do Stripe vem com o cabeçalho `Stripe-Signature`
+(`t=<horário>,v1=<assinatura>`): um HMAC-SHA256 do horário + corpo da requisição, feito com o segredo
+do endpoint (`whsec_...`), que só o Stripe e o catálogo conhecem. O catálogo recalcula com
+`stripe.WebhookSignature.verify_header` antes de ler qualquer coisa do corpo:
+
+- assinatura ausente ou que não bate → `400`, e a tentativa vai pro log como `webhook_recusado`;
+- horário com mais de 5 minutos → `400` também, então reenviar uma chamada legítima capturada não
+  funciona;
+- a verificação usa o corpo cru (`request.get_data()`): se o JSON fosse lido e serializado de novo, a
+  assinatura deixaria de bater.
+
+O Stripe pode mandar o mesmo evento mais de uma vez, e gravar `premium = 1` de novo não muda nada.
+Se o auth-service estiver fora do ar quando o webhook chegar, a resposta é `503` e o Stripe tenta de
+novo mais tarde — o pagamento não se perde.
+
+### Onde o plano fica
+
+O `premium` é uma coluna da tabela `usuarios`, ao lado do `role`, e quem escreve nela é o
+auth-service (`PUT /usuarios/<id>/plano`, sem porta pública). Além dele o banco guarda só
+`stripe_customer_id` e `stripe_subscription_id`. Número do cartão, CVV e validade nem chegam no
+backend: ficam na página e nos servidores do Stripe.
+
+### O benefício é checado no backend
+
+Do mesmo jeito que o admin na moderação de comentários (Padrão A): pra favoritar um filme novo
+acima do limite, o catálogo pergunta o plano **atual** pro auth-service, sem confiar na sessão.
+
+- No limite, a interface desabilita o botão, mas isso é só aparência: tirar o `disabled` no DevTools
+  ou chamar `POST /favoritar` direto devolve `403` e fica no log como `acesso_negado`.
+- Desfavoritar é sempre liberado.
+- Cancelando a assinatura, o `customer.subscription.deleted` volta o usuário pro gratuito na hora. Os
+  favoritos que ele já tinha continuam lá, mas ele só adiciona outro quando ficar abaixo de 5.
+
+### Configuração
+
+| Variável | De onde vem |
+|---|---|
+| `STRIPE_SECRET_KEY` | Painel do Stripe → *Developers* → *API keys* (sempre a `sk_test_...`) |
+| `STRIPE_PRICE_ID` | Preço mensal do produto "Plano Premium" (`price_...`) |
+| `STRIPE_WEBHOOK_SECRET` | Segredo do endpoint de webhook (`whsec_...`) |
+
+Em produção o endpoint cadastrado no Stripe é `https://joao-alegre-isw055.lapps.studio/stripe/webhook`,
+com os eventos `checkout.session.completed` e `customer.subscription.deleted` no formato *snapshot*
+(o webhook lê o objeto inteiro que vem no evento, sem buscar de novo na API). Num banco que já
+existia, rodar o `init.sql` de novo cria as colunas novas (o `ALTER TABLE ... ADD COLUMN IF NOT
+EXISTS` não mexe no que já está lá).
+
+Rodando local, o Stripe não alcança o `localhost`, então o [Stripe CLI](https://docs.stripe.com/stripe-cli)
+repassa os eventos e mostra o `whsec_...` pra pôr no `.env`:
+
+```bash
+stripe listen --forward-to localhost:5000/stripe/webhook
+```
+
+Cartão de teste: `4242 4242 4242 4242`, qualquer data futura e qualquer CVC.
 
 ## Relatório da P1
 

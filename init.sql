@@ -8,6 +8,14 @@ CREATE TABLE IF NOT EXISTS usuarios (
   criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Plano premium (Stripe). Do pagamento, o banco guarda só os IDs do cliente e
+-- da assinatura no Stripe -- nada de cartão. Fica num ALTER separado pra
+-- valer também num banco que já existia (rodar o init.sql de novo é seguro).
+ALTER TABLE usuarios
+  ADD COLUMN IF NOT EXISTS premium BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS stripe_customer_id VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS stripe_subscription_id VARCHAR(255);
+
 CREATE TABLE IF NOT EXISTS reset_tokens (
   token VARCHAR(64) PRIMARY KEY,
   usuario_id INT NOT NULL,

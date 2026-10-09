@@ -1,7 +1,12 @@
+import hashlib
+import hmac
+import json
+import time
+
 import pytest
 import requests
 
-from app import create_app
+from app import create_app, movies
 
 
 class RespostaFalsa:
@@ -20,14 +25,16 @@ def chamadas(monkeypatch):
     feitas = []
     respostas = {}
 
-    def post_falso(url, **kwargs):
+    def chamada_falsa(url, **kwargs):
         feitas.append(url)
         for final, resposta in respostas.items():
             if url.endswith(final):
                 return resposta
         raise requests.exceptions.ConnectionError(url)
 
-    monkeypatch.setattr(requests, "post", post_falso)
+    monkeypatch.setattr(requests, "get", chamada_falsa)
+    monkeypatch.setattr(requests, "post", chamada_falsa)
+    monkeypatch.setattr(requests, "put", chamada_falsa)
     return feitas, respostas
 
 
@@ -36,6 +43,7 @@ def client(monkeypatch, chamadas):
     monkeypatch.setenv("SECRET_KEY", "teste")
     monkeypatch.setenv("AUTH_SERVICE_URL", "http://auth:5001")
     monkeypatch.setenv("LOG_SERVICE_URL", "http://log:5002")
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_teste")
     app = create_app()
     app.config["TESTING"] = True
     return app.test_client()
@@ -92,3 +100,140 @@ def test_swagger_do_catalogo_responde(client):
     resp = client.get("/apispec_1.json")
     assert resp.status_code == 200
     assert "/login" in resp.get_json()["paths"]
+
+
+class ConexaoFalsa:
+    """Só o que a rota de favoritar usa do pymysql. Cada fetchone devolve o
+    próximo item da fila."""
+
+    def __init__(self, resultados):
+        self.resultados = list(resultados)
+        self.consultas = []
+
+    def cursor(self):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def execute(self, sql, params=None):
+        self.consultas.append(sql)
+
+    def fetchone(self):
+        return self.resultados.pop(0) if self.resultados else None
+
+    def close(self):
+        pass
+
+
+def favoritar_com(monkeypatch, client, ja_tem, premium, chamadas):
+    _, respostas = chamadas
+    respostas["/usuarios/1"] = RespostaFalsa(200, {"id": 1, "role": "usuario", "premium": premium})
+    banco = ConexaoFalsa([None, {"total": ja_tem}])
+    monkeypatch.setattr(movies, "get_connection", lambda: banco)
+    with client.session_transaction() as s:
+        s["usuario_id"] = 1
+
+    resp = client.post("/favoritar", data={"tmdb_movie_id": "13", "titulo": "Forrest Gump"})
+    inseriu = any(sql.startswith("INSERT INTO favoritos") for sql in banco.consultas)
+    return resp, inseriu
+
+
+def test_plano_gratuito_nao_passa_do_limite_de_favoritos(client, monkeypatch, chamadas):
+    resp, inseriu = favoritar_com(
+        monkeypatch, client, movies.LIMITE_FAVORITOS_GRATIS, False, chamadas
+    )
+    assert resp.status_code == 403
+    assert not inseriu
+    assert "http://log:5002/eventos" in chamadas[0]
+
+
+def test_premium_favorita_alem_do_limite(client, monkeypatch, chamadas):
+    resp, inseriu = favoritar_com(
+        monkeypatch, client, movies.LIMITE_FAVORITOS_GRATIS, True, chamadas
+    )
+    assert resp.status_code == 302
+    assert inseriu
+
+
+def assinatura_stripe(corpo, segredo, t=None):
+    t = t or int(time.time())
+    v1 = hmac.new(segredo.encode(), f"{t}.{corpo}".encode(), hashlib.sha256).hexdigest()
+    return f"t={t},v1={v1}"
+
+
+EVENTO_PAGO = json.dumps(
+    {
+        "id": "evt_teste",
+        "type": "checkout.session.completed",
+        "data": {
+            "object": {
+                "id": "cs_test_1",
+                "client_reference_id": "7",
+                "payment_status": "paid",
+                "customer": "cus_teste",
+                "subscription": "sub_teste",
+            }
+        },
+    }
+)
+
+
+def test_webhook_sem_assinatura_e_recusado(client, chamadas):
+    feitas, _ = chamadas
+    resp = client.post("/stripe/webhook", data=EVENTO_PAGO, content_type="application/json")
+    assert resp.status_code == 400
+    assert not any(url.endswith("/plano") for url in feitas)
+
+
+def test_webhook_assinado_com_outro_segredo_e_recusado(client, chamadas):
+    feitas, _ = chamadas
+    resp = client.post(
+        "/stripe/webhook",
+        data=EVENTO_PAGO,
+        content_type="application/json",
+        headers={"Stripe-Signature": assinatura_stripe(EVENTO_PAGO, "whsec_outro")},
+    )
+    assert resp.status_code == 400
+    assert not any(url.endswith("/plano") for url in feitas)
+
+
+def test_webhook_antigo_reenviado_e_recusado(client, chamadas):
+    feitas, _ = chamadas
+    uma_hora_atras = int(time.time()) - 3600
+    resp = client.post(
+        "/stripe/webhook",
+        data=EVENTO_PAGO,
+        content_type="application/json",
+        headers={"Stripe-Signature": assinatura_stripe(EVENTO_PAGO, "whsec_teste", uma_hora_atras)},
+    )
+    assert resp.status_code == 400
+    assert not any(url.endswith("/plano") for url in feitas)
+
+
+def test_webhook_de_pagamento_liga_o_premium(client, chamadas):
+    feitas, respostas = chamadas
+    respostas["/usuarios/7/plano"] = RespostaFalsa(200, {"ok": True})
+
+    resp = client.post(
+        "/stripe/webhook",
+        data=EVENTO_PAGO,
+        content_type="application/json",
+        headers={"Stripe-Signature": assinatura_stripe(EVENTO_PAGO, "whsec_teste")},
+    )
+
+    assert resp.status_code == 200
+    assert "http://auth:5001/usuarios/7/plano" in feitas
+
+
+def test_webhook_com_auth_fora_do_ar_pede_pro_stripe_tentar_de_novo(client, chamadas):
+    resp = client.post(
+        "/stripe/webhook",
+        data=EVENTO_PAGO,
+        content_type="application/json",
+        headers={"Stripe-Signature": assinatura_stripe(EVENTO_PAGO, "whsec_teste")},
+    )
+    assert resp.status_code == 503

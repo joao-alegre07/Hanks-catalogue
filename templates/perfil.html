@@ -17,7 +17,7 @@
       <div class="avatar avatar-vazio">{{ usuario.nome[:1] | upper }}</div>
     {% endif %}
     <div>
-      <h2>{{ usuario.nome }}</h2>
+      <h2>{{ usuario.nome }}{% if usuario.premium %} <span class="selo-premium">★ Premium</span>{% endif %}</h2>
       {% if bio %}
         <p class="bio">{{ bio }}</p>
       {% else %}

@@ -248,7 +248,7 @@ def obter_usuario(usuario_id):
         description: Usuário encontrado.
         content:
           application/json:
-            example: {"id": 7, "nome": "Maria", "email": "maria@exemplo.com", "role": "usuario"}
+            example: {"id": 7, "nome": "Maria", "email": "maria@exemplo.com", "role": "usuario", "premium": false}
       404:
         description: Não existe usuário com esse id.
         content:
@@ -261,7 +261,7 @@ def obter_usuario(usuario_id):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, nome, email, role FROM usuarios WHERE id = %s",
+                "SELECT id, nome, email, role, premium FROM usuarios WHERE id = %s",
                 (usuario_id,),
             )
             usuario = cur.fetchone()
@@ -271,7 +271,91 @@ def obter_usuario(usuario_id):
     if usuario is None:
         return jsonify(erro="Usuário não encontrado."), 404
 
+    usuario["premium"] = bool(usuario["premium"])
     return jsonify(usuario)
+
+
+@app.route("/usuarios/<int:usuario_id>/plano", methods=["PUT"])
+def alterar_plano(usuario_id):
+    """Liga ou desliga o premium de um usuário
+    ---
+    tags: [contas]
+    description: >
+      Chamada pelo catálogo depois de validar a assinatura de um webhook do Stripe. Guarda só os
+      IDs do cliente e da assinatura no Stripe, nunca dado de cartão. Repetir a mesma chamada não
+      muda nada (o Stripe pode entregar o mesmo evento mais de uma vez).
+    parameters:
+      - name: usuario_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          example: 7
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [premium]
+            properties:
+              premium:
+                type: boolean
+                example: true
+              stripe_customer_id:
+                type: string
+                example: cus_R2x9aB3cD4eF5g
+              stripe_subscription_id:
+                type: string
+                example: sub_1Q8xYz2eZvKYlo2C
+    responses:
+      200:
+        description: Plano atualizado.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Ok'
+      400:
+        description: Faltou o campo premium.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Erro'
+            example: {"erro": "Informe premium: true ou false."}
+      404:
+        description: Não existe usuário com esse id.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Erro'
+            example: {"erro": "Usuário não encontrado."}
+    """
+    dados = request.get_json(force=True, silent=True) or {}
+    if not isinstance(dados.get("premium"), bool):
+        return jsonify(erro="Informe premium: true ou false."), 400
+
+    premium = dados["premium"]
+    customer_id = dados.get("stripe_customer_id")
+    subscription_id = dados.get("stripe_subscription_id") if premium else None
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM usuarios WHERE id = %s", (usuario_id,))
+            if cur.fetchone() is None:
+                return jsonify(erro="Usuário não encontrado."), 404
+
+            # Ao cancelar, só a assinatura sai; o id do cliente no Stripe fica.
+            cur.execute(
+                "UPDATE usuarios SET premium = %s, "
+                "stripe_customer_id = COALESCE(%s, stripe_customer_id), "
+                "stripe_subscription_id = %s WHERE id = %s",
+                (premium, customer_id, subscription_id, usuario_id),
+            )
+    finally:
+        conn.close()
+
+    return jsonify(ok=True)
 
 
 @app.route("/esqueci-senha", methods=["POST"])

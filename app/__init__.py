@@ -17,11 +17,13 @@ def create_app():
     from .auth import auth_bp
     from .movies import movies_bp
     from .perfil import perfil_bp
+    from .premium import premium_bp
     from .saude import saude_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(movies_bp)
     app.register_blueprint(perfil_bp)
+    app.register_blueprint(premium_bp)
     app.register_blueprint(saude_bp)
 
     # /metrics no formato do Prometheus. Agrupa pela regra da rota

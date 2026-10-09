@@ -1,34 +1,32 @@
 import math
-import os
 
 import requests
 from flask import Blueprint, abort, redirect, render_template, request, session, url_for
 
 from .auditoria import registrar, ultimos_eventos
-from .auth import login_required
+from .auth import consultar_usuario, login_required
 from .db import get_connection
 from .tmdb import buscar_filmes_tom_hanks
 
 movies_bp = Blueprint("movies", __name__)
 
 FILMES_POR_PAGINA = 20
+LIMITE_FAVORITOS_GRATIS = 5
 
 
 def _usuario_e_admin(usuario_id):
     """Consulta o auth-service pelo papel atual do usuário (Padrão A: sem
     confiar no que ficou em cache na sessão, sempre pergunta na hora)."""
-    try:
-        resp = requests.get(
-            os.environ["AUTH_SERVICE_URL"].rstrip("/") + f"/usuarios/{usuario_id}",
-            timeout=5,
-        )
-    except requests.exceptions.RequestException:
-        return False
+    usuario = consultar_usuario(usuario_id)
+    return usuario is not None and usuario.get("role") == "admin"
 
-    if resp.status_code != 200:
-        return False
 
-    return resp.json().get("role") == "admin"
+def usuario_e_premium(usuario_id):
+    # Mesmo esquema do admin: quem acabou de assinar ou cancelar vê a
+    # diferença na hora, sem relogar. Se o auth não responder, vale o plano
+    # gratuito.
+    usuario = consultar_usuario(usuario_id)
+    return usuario is not None and bool(usuario.get("premium"))
 
 
 @movies_bp.route("/")
@@ -64,6 +62,7 @@ def catalogo():
         conn.close()
 
     eh_admin = session.get("role") == "admin"
+    premium = usuario_e_premium(usuario_id)
 
     for filme in filmes_pagina:
         filme["favoritado"] = filme["id"] in favoritados
@@ -77,6 +76,9 @@ def catalogo():
         filmes=filmes_pagina,
         pagina=pagina,
         total_paginas=total_paginas,
+        premium=premium,
+        total_favoritos=len(favoritados),
+        limite_favoritos=LIMITE_FAVORITOS_GRATIS,
     )
 
 
@@ -103,6 +105,17 @@ def favoritar():
                 )
                 acao = "desfavoritar"
             else:
+                # Tirar um favorito é sempre liberado; pôr um novo depois do
+                # limite só pra premium. A checagem é aqui no backend, então
+                # tirar o "disabled" do botão no navegador não adianta.
+                cur.execute(
+                    "SELECT COUNT(*) AS total FROM favoritos WHERE usuario_id = %s",
+                    (usuario_id,),
+                )
+                total = cur.fetchone()["total"]
+                if total >= LIMITE_FAVORITOS_GRATIS and not usuario_e_premium(usuario_id):
+                    abort(403)
+
                 cur.execute(
                     "INSERT INTO favoritos (usuario_id, tmdb_movie_id, titulo, poster_path) "
                     "VALUES (%s, %s, %s, %s)",

@@ -4,12 +4,21 @@
   <h1>Filmes com Tom Hanks</h1>
   <nav class="topbar-links">
     <a href="{{ url_for('perfil.meu_perfil') }}">Meu perfil</a>
+    <a class="link-premium" href="{{ url_for('premium.pagina') }}">{{ "★ Premium" if premium else "Seja Premium" }}</a>
     {% if session.role == "admin" %}
     <a href="{{ url_for('movies.logs') }}">Logs</a>
     {% endif %}
     <a class="logout" href="{{ url_for('auth.logout') }}">Sair</a>
   </nav>
 </header>
+
+{% set limite_atingido = not premium and total_favoritos >= limite_favoritos %}
+{% if not premium %}
+<p class="plano-aviso">
+  Plano gratuito: {{ total_favoritos }} de {{ limite_favoritos }} favoritos.
+  <a href="{{ url_for('premium.pagina') }}">Assine o Premium</a> pra favoritar sem limite.
+</p>
+{% endif %}
 
 <main class="grid">
   {% for filme in filmes %}
@@ -25,9 +34,13 @@
         <input type="hidden" name="titulo" value="{{ filme.title }}">
         <input type="hidden" name="poster_path" value="{{ filme.poster_path }}">
         <input type="hidden" name="page" value="{{ pagina }}">
+        {% if limite_atingido and not filme.favoritado %}
+        <button type="submit" class="fav-btn" disabled>☆ Limite do plano gratuito</button>
+        {% else %}
         <button type="submit" class="fav-btn {{ 'ativo' if filme.favoritado else '' }}">
           {{ "★ Favoritado" if filme.favoritado else "☆ Favoritar" }}
         </button>
+        {% endif %}
       </form>
 
       <div class="comentarios">
