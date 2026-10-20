@@ -42,6 +42,35 @@ passam pelo catálogo, mas são resolvidos internamente pelo serviço de autenti
 alcançável de fora da rede Docker. Catálogo e auth mandam cada evento relevante pro serviço de
 logs, que é o único que escreve no Redis.
 
+A especificação, a arquitetura com diagramas, as regras de negócio tiradas do código e o modelo de
+dados estão em [DOCUMENTACAO.md](DOCUMENTACAO.md).
+
+## SaaS, PaaS e IaaS
+
+O sistema usa as três camadas ao mesmo tempo. O que separa uma da outra é a partir de onde a
+responsabilidade passa a ser de quem usa: na IaaS, do sistema operacional pra cima; na PaaS, só a
+aplicação; na SaaS, nada além de configurar e consumir o produto.
+
+| Peça | Camada | Por quê |
+|---|---|---|
+| VM do servidor da disciplina (Proxmox da Fatec, Ubuntu + Docker) | **IaaS** | É a máquina virtual, com disco e rede, onde a stack roda. Do sistema operacional pra cima (Ubuntu, Docker, Portainer), quem instala e mantém é quem administra a VM: aqui, a disciplina. |
+| Portainer + Docker do servidor | **PaaS** | É onde eu faço o deploy: entrego o `docker-compose.yml` e as imagens, e a plataforma cuida do runtime, da rede entre os containers, dos volumes e de reiniciar o que cair. Não acesso o sistema operacional. |
+| Containers do catálogo, auth-service e log-service | **PaaS** | É o meu código empacotado em imagem (GHCR), rodando na plataforma acima. Escolho a imagem e as variáveis de ambiente; não escolho máquina nem instalo nada no host. |
+| Redis e Garage (no lugar do MinIO) | **PaaS** | Também são containers da stack, na mesma plataforma, mas a configuração é minha: persistência do Redis, bucket e chaves do Garage, healthcheck. Um Redis ou um S3 gerenciado por um provedor seria a mesma função vendida pronta. |
+| MariaDB da disciplina | **PaaS** | Banco entregue pronto: recebo host, usuário e um schema. Instalação, atualização e backup do servidor de banco não passam por mim. |
+| Stripe | **SaaS** | Pagamento pronto: produto, preço, página de checkout e webhook configurados no painel e usados pela API. O cartão é digitado no Stripe e não passa pelo sistema. |
+| Brevo (produção) / Mailtrap (dev) | **SaaS** | E-mail transacional: o auth-service só entrega a mensagem por SMTP; fila e entrega ficam com o provedor. |
+| TMDB | **SaaS** | API de dados de filmes. O catálogo só consulta; não guarda nem mantém o acervo. |
+| Cloudflare | **SaaS** | HTTPS e proxy na frente do `lapps.studio`, configurados num painel. Nada dele roda na stack. |
+| GitHub (repositório, issues, Actions) e GHCR | **SaaS** | Produtos prontos: o pipeline é descrito num YAML e o GitHub fornece as máquinas que rodam os testes e o build; o GHCR guarda as imagens que o Portainer puxa. |
+
+A mesma VM muda de camada dependendo de quem olha. Pra disciplina, que cuida do Ubuntu e do Docker,
+ela é IaaS. Pra mim, que só mando o compose pelo Portainer, o servidor funciona como uma PaaS. Se eu
+tivesse recebido só a VM, instalar e atualizar o sistema, o Docker e um proxy com HTTPS também seria
+trabalho meu.
+
+Prometheus e Grafana ficam fora da tabela porque só sobem no compose de desenvolvimento.
+
 ## Stack
 
 - **Backend**: Python + Flask (dois serviços separados)
@@ -107,6 +136,7 @@ auth-service/Dockerfile   # imagem do serviço de autenticação
 log-service/Dockerfile    # imagem do serviço de logs
 docker-compose.yml        # produção (Portainer) — catálogo, auth, logs, Redis e Garage
 docker-compose.dev.yml    # desenvolvimento local
+DOCUMENTACAO.md           # especificação, arquitetura, regras de negócio e modelo de dados
 ```
 
 ## Deploy
