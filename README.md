@@ -1,3 +1,5 @@
+> Este projeto continua em [github.com/joao-alegre07/talhao-em-dia](https://github.com/joao-alegre07/talhao-em-dia).
+
 # 🎬 Tom Hanks Catalog
 
 [![ci-cd](https://github.com/joao-alegre07/Hanks-catalogue/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/joao-alegre07/Hanks-catalogue/actions/workflows/ci-cd.yml)
